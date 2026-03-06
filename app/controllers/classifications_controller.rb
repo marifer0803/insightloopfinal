@@ -76,7 +76,7 @@ class ClassificationsController < ApplicationController
 
 
   bucket_definitions = {
-    "Dia 1"  => (0..3),   # índices 0,1,2,3
+    "Dia 1"  => (0..3),
     "Dia 5"  => (4..8),
     "Dia 10" => (9..13),
     "Dia 15" => (14..18),
@@ -106,22 +106,45 @@ class ClassificationsController < ApplicationController
                                  .order(created_at: :desc)
                                  .limit(3)
 
+  # Build financial/sentiment context for this classification
+  financial_context = build_classification_financial_context(@classification)
 
-  if @classification.improvements.empty?
-    llm = RubyLLM.chat
+  # Always delete old improvements and regenerate with enriched prompt
+  @classification.improvements.destroy_all
 
-    response = llm
-      .with_instructions(Improvement::IMPROVEMENT_PROMPT)
-      .ask(@classification.full_text_of_conversations)
+  context_data = <<~CTX
+    Classificação: #{@classification.tag}
+    Total de conversas: #{financial_context[:total_conversations]}
 
-    @improvement = Improvement.create!(
-      user: current_user,
-      classification: @classification,
-      content: response.content
-    )
-  else
-    @improvement = @classification.improvements.last
-  end
+    Sentimento médio: #{financial_context[:avg_sentiment]} / 5.0
+    Distribuição de sentimento:
+    - Críticos (score 5): #{financial_context[:sentiment_distribution][:critico]}
+    - Frustrados (score 4): #{financial_context[:sentiment_distribution][:frustrado]}
+    - Neutros (score 3): #{financial_context[:sentiment_distribution][:neutro]}
+    - Positivos (score 1-2): #{financial_context[:sentiment_distribution][:positivo]}
+
+    Customers com churn (churned): #{financial_context[:churned_count]}
+    Customers em risco (at_risk): #{financial_context[:at_risk_count]}
+    Receita perdida (MRR de churned): R$ #{financial_context[:revenue_lost]}
+    Receita em risco (MRR de at_risk): R$ #{financial_context[:revenue_at_risk]}
+
+    Exemplos de conversas:
+    #{@classification.full_text_of_conversations.truncate(3000)}
+  CTX
+
+  prompt_text = Improvement::PRESCRIPTIVE_PROMPT % { context_data: context_data }
+
+  llm = RubyLLM.chat
+  response = llm
+    .with_instructions(prompt_text)
+    .ask("Gere o roadmap prescritivo para o problema: #{@classification.tag}")
+
+  @improvement = Improvement.create!(
+    user: current_user,
+    classification: @classification,
+    content: response.content
+  )
+
   @ia_root_cause = generate_root_cause(@conversations)
 
 end
@@ -236,6 +259,43 @@ def pareto_classifications_with_financial_data
   # Sort by priority_score descending
   pareto_items.sort_by { |r| -r[:priority_score] }
 end
+  def build_classification_financial_context(classification)
+    conversations = classification.conversations
+    total = conversations.count
+
+    avg_sentiment = conversations.where.not(sentiment_score: nil).average(:sentiment_score).to_f.round(2)
+
+    critico = conversations.where(sentiment_score: 5).count
+    frustrado = conversations.where(sentiment_score: 4).count
+    neutro = conversations.where(sentiment_score: 3).count
+    positivo = conversations.where(sentiment_score: [1, 2]).count
+
+    churned_customers = Customer
+      .joins(:conversations)
+      .where(conversations: { classification_id: classification.id }, customers: { status: "churned" })
+      .distinct
+
+    at_risk_customers = Customer
+      .joins(:conversations)
+      .where(conversations: { classification_id: classification.id }, customers: { status: "at_risk" })
+      .distinct
+
+    {
+      total_conversations: total,
+      avg_sentiment: avg_sentiment,
+      sentiment_distribution: {
+        critico: critico,
+        frustrado: frustrado,
+        neutro: neutro,
+        positivo: positivo
+      },
+      churned_count: churned_customers.count,
+      at_risk_count: at_risk_customers.count,
+      revenue_lost: churned_customers.sum(:mrr).to_f.round(2),
+      revenue_at_risk: at_risk_customers.sum(:mrr).to_f.round(2)
+    }
+  end
+
   def generate_root_cause(conversations)
   texto = conversations.map { |c| c.content }.join("\n")
   prompt = <<~PROMPT
