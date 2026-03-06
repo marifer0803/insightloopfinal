@@ -1,65 +1,27 @@
-<!doctype html>
-<html lang="pt-BR">
-<head>
-<!-- Basic document metadata -->
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>InsightLoop — Customer Success Intelligence</title>
-<meta name="description" content="Plataforma B2B SaaS para E-commerce Customer Success — Análise de tickets e automação com IA" />
-<meta name="turbo-cache-control" content="no-cache" />
-
-<!-- Fonts / CSS (replace with your toolchain or Tailwind build) -->
-<link rel="preconnect" href="https://fonts.googleapis.com" />
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
-<!-- TODO: replace with your app.css or Tailwind output -->
-<link rel="stylesheet" href="/assets/styles.css" />
-
-
-<!-- Open Graph (kept minimal) -->
-<meta property="og:title" content="InsightLoop - Customer Success Intelligence" />
-<meta property="og:description" content="Análises e automação para atendimento ao cliente de e-commerce" />
-
-<!-- JS entry (defer) -->
-<script defer src="/assets/app.js"></script>
-
-</head>
-
-<!-- BODY STARTS -->
-<body>
-
-<div id="app" class="app">
-
-<!-- MAIN: header + content -->
-<main class="content" id="main-content">
-  <div class="page-container">
+<div class="page-container">
   <h1 class="page-title">Análises</h1>
   <p class="page-subtitle">Visualize métricas e tendências do atendimento ao cliente</p>
 
   <!-- KPI Cards -->
   <section aria-label="KPIs" class="kpi-grid" role="region">
     <div class="kpi-card">
-      <p class="kpi-label">Volume Total</p>
-      <p class="kpi-value"><%= Conversation.count %></p>
-      <p class="kpi-delta kpi-delta--up">+12% vs. semana anterior</p>
+      <p class="kpi-label">Total de Conversas</p>
+      <p class="kpi-value"><%= @total_conversations %></p>
     </div>
 
     <div class="kpi-card">
-      <p class="kpi-label">Taxa de Resolução</p>
-      <p class="kpi-value">88.5%</p>
-      <p class="kpi-delta kpi-delta--up">+3.2% vs. semana anterior</p>
+      <p class="kpi-label">Sentimento Médio</p>
+      <p class="kpi-value"><%= @avg_sentiment %> / 5.0</p>
     </div>
 
     <div class="kpi-card">
-      <p class="kpi-label">Tempo Médio</p>
-      <p class="kpi-value">8.2 min</p>
-      <p class="kpi-delta kpi-delta--down">+1.5 min vs. semana anterior</p>
+      <p class="kpi-label">Receita em Risco</p>
+      <p class="kpi-value">R$ <%= number_with_delimiter(@revenue_at_risk.to_i) %></p>
     </div>
 
     <div class="kpi-card">
-      <p class="kpi-label">Satisfação</p>
-      <p class="kpi-value">4.6 / 5.0</p>
-      <p class="kpi-delta kpi-delta--up">+0.2 vs. semana anterior</p>
+      <p class="kpi-label">Receita Perdida</p>
+      <p class="kpi-value">R$ <%= number_with_delimiter(@revenue_lost.to_i) %></p>
     </div>
   </section>
 
@@ -68,27 +30,79 @@
     <h2 id="pareto-title">Análise de Foco 80/20 (Princípio de Pareto)</h2>
     <p class="muted">Identifique os poucos problemas (20%) que geram a maior parte do volume (80%)</p>
 
-    <div class="pareto-callout">
-      <p class="pareto-callout__title">
-        <strong>💡 Insight:</strong>
-        Focar nos seguintes problemas resolverá
-        <strong><%= @pareto.last.cum_pct.to_i %>%</strong> do volume total
-      </p>
+    <% if @pareto.any? %>
+      <div class="pareto-callout">
+        <p class="pareto-callout__title">
+          <strong>Insight:</strong>
+          Focar nos seguintes problemas resolverá
+          <strong><%= @pareto.last.cum_pct.to_i %>%</strong> do volume total
+        </p>
 
-      <ul class="pareto-list">
-        <% @pareto.each do |item| %>
-          <li class="pareto-list__item">
-            <strong><%= item.tag %></strong>:
-            <%= item.pct.to_i %>% do volume total
-            <span class="muted">(<%= item.cum_pct.to_i %>% cumulativo)</span>
-          </li>
-        <% end %>
-      </ul>
-    </div>
+        <ul class="pareto-list">
+          <% @pareto.each do |item| %>
+            <li class="pareto-list__item">
+              <strong><%= item.tag %></strong>:
+              <%= item.pct.to_i %>% do volume total
+              <span class="muted">(<%= item.cum_pct.to_i %>% cumulativo)</span>
+            </li>
+          <% end %>
+        </ul>
+      </div>
 
-    <div id="classificationChart" class="chart-wrap">
-      <%= render "shared/charts_paretto" %>
-    </div>
+      <div id="classificationChart" class="chart-wrap">
+        <%= render "shared/charts_paretto" %>
+      </div>
+    <% else %>
+      <p class="text-muted">Nenhum dado disponível para análise de Pareto.</p>
+    <% end %>
+  </section>
+
+  <!-- Classification table -->
+  <section class="section-card" aria-labelledby="classification-table-title">
+    <h3 id="classification-table-title">Classificações por Impacto</h3>
+    <p class="muted">Ordenadas por Priority Score (composição de volume, sentimento, churn e receita)</p>
+
+    <% if @classification_rows.any? %>
+      <div class="table-responsive">
+        <table class="table table-hover">
+          <thead>
+            <tr>
+              <th>Tag</th>
+              <th>Volume</th>
+              <th>Sentimento Médio</th>
+              <th>Churn Rate</th>
+              <th>Receita Perdida</th>
+              <th>Priority Score</th>
+            </tr>
+          </thead>
+          <tbody>
+            <% @classification_rows.each do |row| %>
+              <% highlight = row.avg_sentiment >= 4 || row.churn_rate >= 30 %>
+              <tr style="<%= 'background-color: #fff0f0; border-left: 3px solid #dc3545;' if highlight %>">
+                <td>
+                  <%= link_to row.tag, classification_path(row.id) %>
+                </td>
+                <td><%= row.volume %></td>
+                <td>
+                  <span class="<%= 'text-danger fw-bold' if row.avg_sentiment >= 4 %>">
+                    <%= row.avg_sentiment %>
+                  </span>
+                </td>
+                <td>
+                  <span class="<%= 'text-danger fw-bold' if row.churn_rate >= 30 %>">
+                    <%= row.churn_rate %>%
+                  </span>
+                </td>
+                <td>R$ <%= number_with_delimiter(row.revenue_lost.to_i) %></td>
+                <td><strong><%= row.priority_score %></strong></td>
+              </tr>
+            <% end %>
+          </tbody>
+        </table>
+      </div>
+    <% else %>
+      <p class="text-muted">Nenhuma classificação com conversas encontrada.</p>
+    <% end %>
   </section>
 
   <!-- Top issues list -->
@@ -103,17 +117,9 @@
     </div>
   </section>
 
-   <div class="page-footer">
-  <!--   <%= link_to "⬅", root_path, class: "back-link" %>-->
+  <div class="page-footer">
     <%= link_to root_path, class: "strategic-plan__back" do %>
       <i class="fa-solid fa-arrow-left-long"></i>
     <% end %>
   </div>
-  </div>
-</main>
 </div>
-</div>
-
-
-</body>
-</html>
