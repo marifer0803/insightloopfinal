@@ -1,0 +1,31 @@
+<% classification = Classification.find_by(tag: item[:tag]) %>
+
+<%= link_to(classification ? classification_path(classification) : classifications_path,
+            class: "trend-card",
+            role: "listitem") do %>
+
+  <div class="trend-card__left">
+    <div class="trend-card__index">
+      <%= (local_assigns[:index] || 1) %>
+    </div>
+
+    <div class="trend-card__texts">
+      <div class="trend-card__title"><%= item[:tag] || "—" %></div>
+      <div class="trend-card__subtitle">
+        <%= item[:count] || 0 %> ocorrências
+        · Churn: <%= item[:churn_rate] %>%
+        · R$ <%= number_with_delimiter(item[:revenue_lost].to_i, delimiter: ".") %> perdidos
+      </div>
+    </div>
+  </div>
+
+  <div class="trend-card__right">
+    <div class="trend-card__delta">
+      <span class="trend-card__delta-icon" aria-hidden="true">⤴︎</span>
+      <span><%= item[:growth].to_i %>%</span>
+    </div>
+
+    <div class="trend-card__arrow" aria-hidden="true">➜</div>
+  </div>
+
+<% end %>

@@ -2,9 +2,8 @@ class ClassificationsController < ApplicationController
 
   def index
     @classifications = Classification.all
-    @pareto = pareto_classifications
-    # inserir aqui tags que foram elegidas pelo pareto -> montar gráfico de tendência
-    pareto_tags = @pareto.map(&:tag)
+    @pareto = pareto_classifications_with_financial_data
+    pareto_tags = @pareto.map { |p| p[:tag] }
     @trend_series = conversation_trends_for(pareto_tags)
 
     days = 7
@@ -17,14 +16,14 @@ class ClassificationsController < ApplicationController
         .joins(:classification)
         .where(classifications: { tag: pareto_tags })
         .where(occurred_on: current_start..current_end)
-        .group("classifications.tag")
+        .group(“classifications.tag”)
         .count
 
       previous_counts = Conversation
         .joins(:classification)
         .where(classifications: { tag: pareto_tags })
         .where(occurred_on: previous_start..previous_end)
-        .group("classifications.tag")
+        .group(“classifications.tag”)
         .count
 
       @growth_by_tag = pareto_tags.index_with do |tag|
@@ -38,18 +37,16 @@ class ClassificationsController < ApplicationController
         end
       end
 
-      # “cola” o growth em cada item do @pareto (pra funcionar item.growth no view)
       @pareto.each do |item|
-        growth_value = @growth_by_tag[item.tag].to_i
-        item.define_singleton_method(:growth) { growth_value }
+        item[:growth] = @growth_by_tag[item[:tag]].to_i
       end
 
     # Get counts by tag, excluding blank tags (optional)
     counts_hash = Conversation
                     .joins(:classification)
-                    .where.not(classifications: { tag: [nil, ""] })
-                    .group("classifications.tag")
-                    .order(Arel.sql("COUNT(*) DESC"))
+                    .where.not(classifications: { tag: [nil, “”] })
+                    .group(“classifications.tag”)
+                    .order(Arel.sql(“COUNT(*) DESC”))
                     .count
 
     # labels (tags) and counts array (already sorted descending by DB)
@@ -131,36 +128,113 @@ end
 
   private
 
-def pareto_classifications
-  rows = Conversation
+def pareto_classifications_with_financial_data
+  # Base volume data per classification tag
+  volume_rows = Conversation
     .joins(:classification)
     .select(
       "classifications.tag AS tag,
-      COUNT(*) AS count,
-      ROUND(
-        100.0 * COUNT(*) / SUM(COUNT(*)) OVER ()
-      ) AS pct,
-      ROUND(
-        100.0 * SUM(COUNT(*)) OVER (
-          ORDER BY COUNT(*) DESC, classifications.tag ASC
-          ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
-        )
-        / SUM(COUNT(*)) OVER ()
-      ) AS cum_pct,
-      ROUND(
-        100.0 * SUM(COUNT(*)) OVER (
-          ORDER BY COUNT(*) DESC, classifications.tag ASC
-          ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
-        )
-        / SUM(COUNT(*)) OVER (),
-      2
-      ) AS cum_pct_2"
+      COUNT(*) AS conv_count,
+      ROUND(100.0 * COUNT(*) / SUM(COUNT(*)) OVER ()) AS pct,
+      ROUND(100.0 * SUM(COUNT(*)) OVER (
+        ORDER BY COUNT(*) DESC, classifications.tag ASC
+        ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+      ) / SUM(COUNT(*)) OVER ()) AS cum_pct,
+      ROUND(100.0 * SUM(COUNT(*)) OVER (
+        ORDER BY COUNT(*) DESC, classifications.tag ASC
+        ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+      ) / SUM(COUNT(*)) OVER (), 2) AS cum_pct_2"
     )
     .group("classifications.tag")
-    .order("count DESC, classifications.tag ASC")
+    .order("conv_count DESC, classifications.tag ASC")
 
-  # Keep only classifications contributing to the first 80%
-  rows.select { |r| r.cum_pct_2.to_f <= 80.00 }
+  tags = volume_rows.map(&:tag)
+  return [] if tags.blank?
+
+  # Distinct customers per tag
+  total_customers_by_tag = Conversation
+    .joins(:classification)
+    .where(classifications: { tag: tags })
+    .where.not(customer_id: nil)
+    .group("classifications.tag")
+    .distinct
+    .count(:customer_id)
+
+  # Churned customers per tag
+  churned_by_tag = Conversation
+    .joins(:classification, :customer)
+    .where(classifications: { tag: tags }, customers: { status: "churned" })
+    .group("classifications.tag")
+    .distinct
+    .count(:customer_id)
+
+  # Revenue lost (MRR of churned customers) per tag
+  revenue_lost_by_tag = Customer
+    .joins(conversations: :classification)
+    .where(customers: { status: "churned" }, classifications: { tag: tags })
+    .group("classifications.tag")
+    .distinct
+    .sum("customers.mrr")
+
+  # Revenue at risk (MRR of at_risk customers) per tag
+  revenue_at_risk_by_tag = Customer
+    .joins(conversations: :classification)
+    .where(customers: { status: "at_risk" }, classifications: { tag: tags })
+    .group("classifications.tag")
+    .distinct
+    .sum("customers.mrr")
+
+  # Average sentiment per tag
+  avg_sentiment_by_tag = Conversation
+    .joins(:classification)
+    .where(classifications: { tag: tags })
+    .where.not(sentiment_score: nil)
+    .group("classifications.tag")
+    .average(:sentiment_score)
+
+  # Build enriched data
+  enriched = volume_rows.map do |row|
+    tag = row.tag
+    total_cust = total_customers_by_tag[tag].to_i
+    churn_count = churned_by_tag[tag].to_i
+    churn_rate = total_cust.positive? ? ((churn_count.to_f / total_cust) * 100).round(1) : 0.0
+    rev_lost = revenue_lost_by_tag[tag].to_f.round(2)
+    rev_at_risk = revenue_at_risk_by_tag[tag].to_f.round(2)
+    avg_sent = avg_sentiment_by_tag[tag].to_f.round(2)
+
+    {
+      tag: tag,
+      count: row.conv_count.to_i,
+      pct: row.pct.to_i,
+      cum_pct: row.cum_pct.to_i,
+      cum_pct_2: row.cum_pct_2.to_f,
+      churn_count: churn_count,
+      churn_rate: churn_rate,
+      revenue_at_risk: rev_at_risk,
+      revenue_lost: rev_lost,
+      avg_sentiment: avg_sent
+    }
+  end
+
+  # Filter to 80% Pareto
+  pareto_items = enriched.select { |r| r[:cum_pct_2] <= 80.00 }
+
+  # Compute composite priority score
+  max_rev_lost = pareto_items.map { |r| r[:revenue_lost] }.max.to_f
+  max_avg_sent = pareto_items.map { |r| r[:avg_sentiment] }.max.to_f
+
+  pareto_items.each do |item|
+    norm_rev_lost = max_rev_lost.positive? ? (item[:revenue_lost] / max_rev_lost) : 0.0
+    norm_avg_sent = max_avg_sent.positive? ? (item[:avg_sentiment] / max_avg_sent) : 0.0
+    item[:priority_score] = (
+      (item[:churn_rate] / 100.0 * 0.4) +
+      (norm_rev_lost * 0.3) +
+      (norm_avg_sent * 0.3)
+    ).round(3)
+  end
+
+  # Sort by priority_score descending
+  pareto_items.sort_by { |r| -r[:priority_score] }
 end
   def generate_root_cause(conversations)
   texto = conversations.map { |c| c.content }.join("\n")

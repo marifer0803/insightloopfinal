@@ -66,21 +66,23 @@
   <!-- Pareto / 80-20 analysis -->
   <section class="section-card" aria-labelledby="pareto-title">
     <h2 id="pareto-title">Análise de Foco 80/20 (Princípio de Pareto)</h2>
-    <p class="muted">Identifique os poucos problemas (20%) que geram a maior parte do volume (80%)</p>
+    <p class="muted">Priorização por score composto: churn rate (40%) + receita perdida (30%) + sentimento (30%)</p>
 
     <div class="pareto-callout">
       <p class="pareto-callout__title">
         <strong>💡 Insight:</strong>
         Focar nos seguintes problemas resolverá
-        <strong><%= @pareto.last.cum_pct.to_i %>%</strong> do volume total
+        <strong><%= @pareto.last&.dig(:cum_pct) || 0 %>%</strong> do volume total
       </p>
 
       <ul class="pareto-list">
         <% @pareto.each do |item| %>
           <li class="pareto-list__item">
-            <strong><%= item.tag %></strong>:
-            <%= item.pct.to_i %>% do volume total
-            <span class="muted">(<%= item.cum_pct.to_i %>% cumulativo)</span>
+            <strong><%= item[:tag] %></strong>:
+            <%= item[:pct] %>% do volume total
+            <span class="muted">(<%= item[:cum_pct] %>% cumulativo)</span>
+            — Churn: <%= item[:churn_rate] %>%
+            | Receita perdida: R$ <%= number_with_delimiter(item[:revenue_lost], delimiter: ".") %>
           </li>
         <% end %>
       </ul>
@@ -91,14 +93,74 @@
     </div>
   </section>
 
+  <!-- Financial Impact Table -->
+  <section class="section-card" aria-labelledby="financial-impact-title">
+    <h3 id="financial-impact-title">Impacto Financeiro por Classificação</h3>
+    <p class="muted">Classificações ordenadas por score de prioridade composto</p>
+
+    <div style="overflow-x: auto;">
+      <table style="width: 100%; border-collapse: collapse; font-size: 0.9rem;">
+        <thead>
+          <tr style="border-bottom: 2px solid #e2e8f0; text-align: left;">
+            <th style="padding: 12px 8px;">#</th>
+            <th style="padding: 12px 8px;">Classificação</th>
+            <th style="padding: 12px 8px;">Volume</th>
+            <th style="padding: 12px 8px;">Churn Count</th>
+            <th style="padding: 12px 8px;">Churn Rate</th>
+            <th style="padding: 12px 8px;">Receita Perdida</th>
+            <th style="padding: 12px 8px;">Receita em Risco</th>
+            <th style="padding: 12px 8px;">Sentimento Médio</th>
+            <th style="padding: 12px 8px;">Priority Score</th>
+          </tr>
+        </thead>
+        <tbody>
+          <% @pareto.each_with_index do |item, i| %>
+            <% is_critical = item[:avg_sentiment] >= 4 || item[:churn_rate] >= 30 %>
+            <tr style="border-bottom: 1px solid #e2e8f0; <%= 'background-color: #fff5f5;' if is_critical %>">
+              <td style="padding: 10px 8px;"><%= i + 1 %></td>
+              <td style="padding: 10px 8px;">
+                <% classification = Classification.find_by(tag: item[:tag]) %>
+                <% if classification %>
+                  <%= link_to item[:tag], classification_path(classification), style: "font-weight: 600; color: #2d3748; text-decoration: none;" %>
+                <% else %>
+                  <strong><%= item[:tag] %></strong>
+                <% end %>
+                <% if is_critical %>
+                  <span style="background: #e53e3e; color: white; padding: 2px 8px; border-radius: 12px; font-size: 0.75rem; margin-left: 8px;">CRÍTICO</span>
+                <% end %>
+              </td>
+              <td style="padding: 10px 8px;"><%= item[:count] %></td>
+              <td style="padding: 10px 8px;"><%= item[:churn_count] %></td>
+              <td style="padding: 10px 8px; <%= 'color: #e53e3e; font-weight: 700;' if item[:churn_rate] >= 30 %>">
+                <%= item[:churn_rate] %>%
+              </td>
+              <td style="padding: 10px 8px; color: #e53e3e; font-weight: 600;">
+                R$ <%= number_with_delimiter(item[:revenue_lost].round(0), delimiter: ".") %>
+              </td>
+              <td style="padding: 10px 8px; color: #dd6b20; font-weight: 600;">
+                R$ <%= number_with_delimiter(item[:revenue_at_risk].round(0), delimiter: ".") %>
+              </td>
+              <td style="padding: 10px 8px; <%= 'color: #e53e3e; font-weight: 700;' if item[:avg_sentiment] >= 4 %>">
+                <%= item[:avg_sentiment] %> / 5.0
+              </td>
+              <td style="padding: 10px 8px; font-weight: 700;">
+                <%= (item[:priority_score] * 100).round(1) %>
+              </td>
+            </tr>
+          <% end %>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
   <!-- Top issues list -->
   <section class="section-card problems-section" aria-labelledby="top-issues-title">
     <h3 id="top-issues-title" class="problems-section__title">Principais Problemas</h3>
-    <p class="problems-section__subtitle">Tópicos em alta que precisam de atenção</p>
+    <p class="problems-section__subtitle">Tópicos priorizados por impacto financeiro e churn</p>
 
     <div class="problems-list" role="list">
       <% @pareto.each_with_index do |item, i| %>
-        <%= render partial: "shared/trend_card", locals: { item: item, index: i + 1 } %>
+        <%= render partial: "shared/trend_card_hash", locals: { item: item, index: i + 1 } %>
       <% end %>
     </div>
   </section>
