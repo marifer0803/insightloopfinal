@@ -1,20 +1,50 @@
+<% sentiment_colors = { "positivo" => "badge-soft-success", "neutro" => "badge-soft-gray", "frustrado" => "badge-soft-warn", "crítico" => "badge-soft-danger" } %>
+
 <div class="conversation-show">
 
-  <!-- Header -->
   <div class="conversation-show__header">
-      <h1 class="conversation-show__title"><%= @conversation.classification&.tag || "Aguardando classificação"%></h1>
+    <h1 class="conversation-show__title"><%= @conversation.classification&.tag || "Aguardando classificação" %></h1>
   </div>
-  <!-- Meta informações -->
+
   <div class="conversation-show__meta">
-    <span class="meta-item">
-      <strong>Canal:</strong> <%= @conversation.channel %>
-    </span>
+    <% sentiment = @conversation.sentiment_label.to_s %>
+    <% if sentiment.present? %>
+      <span class="badge <%= sentiment_colors[sentiment] || 'badge-soft-gray' %>">
+        <%= sentiment.capitalize %>
+      </span>
+    <% end %>
+
+    <% if @conversation.channel.present? %>
+      <span class="meta-item">
+        <strong>Canal:</strong> <%= @conversation.channel %>
+      </span>
+    <% end %>
 
     <span class="meta-item">
-      <strong>ID do Usuário:</strong> <%= @conversation.user_id %>
+      <strong>Data:</strong> <%= @conversation.occurred_on.strftime("%d/%m/%Y") %>
     </span>
   </div>
-  <!-- Conteúdo da conversa -->
+
+  <% if @conversation.customer.present? %>
+    <div class="conversation-show__meta" style="margin-top: 0.5rem;">
+      <span class="meta-item">
+        <strong>Cliente:</strong> <%= @conversation.customer.name %>
+      </span>
+
+      <% if @conversation.customer.plan.present? %>
+        <span class="meta-item">
+          <strong>Plano:</strong> <%= @conversation.customer.plan %>
+        </span>
+      <% end %>
+
+      <% if @conversation.customer.mrr.present? %>
+        <span class="meta-item">
+          <strong>MRR:</strong> R$ <%= number_with_delimiter(@conversation.customer.mrr.to_i) %>
+        </span>
+      <% end %>
+    </div>
+  <% end %>
+
   <div class="conversation-thread">
     <h2>Conversa</h2>
 
@@ -35,7 +65,6 @@
   </div>
 </div>
 
-  <%= link_to insight_list_conversations_path, class: "strategic-plan__back" do %>
-    <i class="fa-solid fa-arrow-left-long"></i>
-
-  <% end %>
+<%= link_to insight_list_conversations_path, class: "strategic-plan__back" do %>
+  <i class="fa-solid fa-arrow-left-long"></i>
+<% end %>

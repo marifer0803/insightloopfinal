@@ -182,7 +182,6 @@
           </header>
 
           <% texto = @improvement.content.to_s %>
-          <%# Parse by ## headings first, fallback to "Prazo:" split %>
           <% if texto.include?("## Curto Prazo") %>
             <% curto = texto.split("## Curto Prazo").last&.split(/## (Médio|Longo) Prazo/)&.first %>
             <% medio = texto.split("## Médio Prazo").last&.split(/## Longo Prazo/)&.first %>
