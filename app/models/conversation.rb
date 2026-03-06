@@ -37,8 +37,12 @@ class Conversation < ApplicationRecord
       Available categories (name: description):
       #{categories_prompt}
 
+      - Analyze the sentiment of the customer in the conversation.
+      - Assign a sentiment_score from 1 to 5 (1=very positive, 2=positive, 3=neutral, 4=frustrated, 5=critical).
+      - Assign a sentiment_label: one of "positivo", "neutro", "frustrado", "crítico".
+
       Output JSON only (no extra text), exactly:
-      {"tag":"<tag>","category":"<category>"}
+      {"tag":"<tag>","category":"<category>","sentiment_score":4,"sentiment_label":"frustrado"}
     PROMPT
 
     ruby_llm_chat.with_instructions(system_prompt)
@@ -59,6 +63,14 @@ class Conversation < ApplicationRecord
     classification = Classification.find_by(tag: tag_value) || fallback
     category       = Category.find_by(name: category_value)
 
-    update(classification: classification, category: category)
+    sentiment_score = data["sentiment_score"]
+    sentiment_label = data["sentiment_label"]
+
+    update(
+      classification: classification,
+      category: category,
+      sentiment_score: sentiment_score,
+      sentiment_label: sentiment_label
+    )
   end
 end
