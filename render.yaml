@@ -1,0 +1,26 @@
+databases:
+  - name: insightloopfinal-db
+    plan: free
+    databaseName: insightloopfinal_production
+    user: insightloopfinal
+
+services:
+  - type: web
+    name: insightloopfinal
+    runtime: ruby
+    plan: free
+    buildCommand: bundle install && bundle exec rake assets:precompile && bundle exec rake db:migrate
+    startCommand: bundle exec puma -C config/puma.rb
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: insightloopfinal-db
+          property: connectionURI
+      - key: RAILS_ENV
+        value: production
+      - key: RAILS_MASTER_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: RAILS_LOG_LEVEL
+        value: info

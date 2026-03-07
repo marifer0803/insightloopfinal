@@ -79,6 +79,4 @@ test:
 #
 production:
   <<: *default
-  database: insightloopfinal_production
-  username: insightloopfinal
-  password: <%= ENV["INSIGHTLOOPFINAL_DATABASE_PASSWORD"] %>
+  url: <%= ENV["DATABASE_URL"] %>
