@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.1].define(version: 2025_12_16_202853) do
+ActiveRecord::Schema[7.1].define(version: 2026_03_06_140405) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "plpgsql"
 
@@ -45,9 +45,28 @@ ActiveRecord::Schema[7.1].define(version: 2025_12_16_202853) do
     t.datetime "updated_at", null: false
     t.date "occurred_on", null: false
     t.bigint "category_id"
+    t.integer "sentiment_score"
+    t.string "sentiment_label"
+    t.bigint "customer_id"
     t.index ["category_id"], name: "index_conversations_on_category_id"
     t.index ["classification_id"], name: "index_conversations_on_classification_id"
+    t.index ["customer_id"], name: "index_conversations_on_customer_id"
     t.index ["user_id"], name: "index_conversations_on_user_id"
+  end
+
+  create_table "customers", force: :cascade do |t|
+    t.string "external_id", null: false
+    t.string "name"
+    t.string "email"
+    t.decimal "mrr", precision: 10, scale: 2
+    t.string "plan"
+    t.string "status", default: "active", null: false
+    t.date "churned_at"
+    t.bigint "user_id", null: false
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["external_id"], name: "index_customers_on_external_id", unique: true
+    t.index ["user_id"], name: "index_customers_on_user_id"
   end
 
   create_table "improvements", force: :cascade do |t|
@@ -87,7 +106,9 @@ ActiveRecord::Schema[7.1].define(version: 2025_12_16_202853) do
   add_foreign_key "chats", "users"
   add_foreign_key "conversations", "categories"
   add_foreign_key "conversations", "classifications"
+  add_foreign_key "conversations", "customers"
   add_foreign_key "conversations", "users"
+  add_foreign_key "customers", "users"
   add_foreign_key "improvements", "classifications"
   add_foreign_key "improvements", "users"
   add_foreign_key "messages", "chats"
