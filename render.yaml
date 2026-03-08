@@ -15,7 +15,7 @@ services:
       - key: DATABASE_URL
         fromDatabase:
           name: insightloopfinal-db
-          property: connectionURI
+          property: connectionString
       - key: RAILS_ENV
         value: production
       - key: RAILS_MASTER_KEY
