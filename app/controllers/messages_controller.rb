@@ -171,7 +171,87 @@ end
     "
   end
 
+  def churn_and_sentiment_context
+    tags = Classification.pluck(:tag).compact
+
+    return "" if tags.blank?
+
+    # Sentiment avg per classification
+    sentiment_by_tag = Conversation
+      .joins(:classification)
+      .where.not(sentiment_score: nil)
+      .group("classifications.tag")
+      .average(:sentiment_score)
+
+    # Churn data per classification
+    churned_by_tag = Conversation
+      .joins(:classification, :customer)
+      .where(customers: { status: "churned" })
+      .group("classifications.tag")
+      .distinct
+      .count(:customer_id)
+
+    total_customers_by_tag = Conversation
+      .joins(:classification)
+      .where.not(customer_id: nil)
+      .group("classifications.tag")
+      .distinct
+      .count(:customer_id)
+
+    revenue_lost_by_tag = Customer
+      .joins(conversations: :classification)
+      .where(customers: { status: "churned" })
+      .group("classifications.tag")
+      .distinct
+      .sum("customers.mrr")
+
+    revenue_at_risk_by_tag = Customer
+      .joins(conversations: :classification)
+      .where(customers: { status: "at_risk" })
+      .group("classifications.tag")
+      .distinct
+      .sum("customers.mrr")
+
+    total_revenue_at_risk = Customer.where(status: "at_risk").sum(:mrr).to_f.round(2)
+    total_revenue_lost = Customer.where(status: "churned").sum(:mrr).to_f.round(2)
+
+    churn_data = tags.map do |tag|
+      total_cust = total_customers_by_tag[tag].to_i
+      churn_count = churned_by_tag[tag].to_i
+      churn_rate = total_cust.positive? ? ((churn_count.to_f / total_cust) * 100).round(1) : 0.0
+
+      {
+        tag: tag,
+        avg_sentiment: sentiment_by_tag[tag].to_f.round(2),
+        churn_count: churn_count,
+        churn_rate: churn_rate,
+        revenue_lost: revenue_lost_by_tag[tag].to_f.round(2),
+        revenue_at_risk: revenue_at_risk_by_tag[tag].to_f.round(2)
+      }
+    end.select { |d| d[:churn_count] > 0 || d[:avg_sentiment] > 0 }
+
+    <<~CTX
+    DADOS DE CHURN E SENTIMENTO POR CLASSIFICAÇÃO:
+    Receita total em risco (at_risk): R$ #{total_revenue_at_risk}
+    Receita total perdida (churned): R$ #{total_revenue_lost}
+
+    Detalhamento por classificação:
+    ```
+    #{churn_data.to_json}
+    ```
+
+    Legenda:
+    - avg_sentiment: média de 1 (muito positivo) a 5 (crítico)
+    - churn_count: quantidade de customers churned
+    - churn_rate: percentual de churn entre customers daquela classificação
+    - revenue_lost: MRR perdido (customers churned)
+    - revenue_at_risk: MRR em risco (customers at_risk)
+
+    Use estes dados para responder perguntas sobre impacto financeiro, churn e sentimento com precisão.
+    CTX
+  end
+
   def instructions
-    [SYSTEM_PROMPT, classifications_count, categories_count, classification_and_improvements_dados_and_context, pareto_and_context].compact.join("\n\n")
+    [SYSTEM_PROMPT, classifications_count, categories_count, classification_and_improvements_dados_and_context, pareto_and_context, churn_and_sentiment_context].compact.join("\n\n")
   end
 end

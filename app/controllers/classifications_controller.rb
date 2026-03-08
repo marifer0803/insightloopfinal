@@ -2,9 +2,8 @@ class ClassificationsController < ApplicationController
 
   def index
     @classifications = Classification.all
-    @pareto = pareto_classifications
-
-    pareto_tags = @pareto.map(&:tag)
+    @pareto = pareto_classifications_with_financial_data
+    pareto_tags = @pareto.map { |p| p[:tag] }
     @trend_series = conversation_trends_for(pareto_tags)
 
     days = 7
@@ -34,8 +33,7 @@ class ClassificationsController < ApplicationController
     end
 
     @pareto.each do |item|
-      growth_value = @growth_by_tag[item.tag].to_i
-      item.define_singleton_method(:growth) { growth_value }
+      item[:growth] = @growth_by_tag[item[:tag]].to_i
     end
 
     counts_hash = Conversation
@@ -113,25 +111,185 @@ class ClassificationsController < ApplicationController
                                   .order(created_at: :desc)
                                   .limit(3)
 
-    if @classification.improvements.empty?
-      llm = RubyLLM.chat
+    # Build financial/sentiment context for this classification
+    financial_context = build_classification_financial_context(@classification)
 
-      response = llm
-        .with_instructions(Improvement::IMPROVEMENT_PROMPT)
-        .ask(@classification.full_text_of_conversations)
+    # Always delete old improvements and regenerate with enriched prompt
+    @classification.improvements.destroy_all
 
-      @improvement = Improvement.create!(
-        user: current_user,
-        classification: @classification,
-        content: response.content
-      )
-    else
-      @improvement = @classification.improvements.last
-    end
+    context_data = <<~CTX
+      Classificação: #{@classification.tag}
+      Total de conversas: #{financial_context[:total_conversations]}
+
+      Sentimento médio: #{financial_context[:avg_sentiment]} / 5.0
+      Distribuição de sentimento:
+      - Críticos (score 5): #{financial_context[:sentiment_distribution][:critico]}
+      - Frustrados (score 4): #{financial_context[:sentiment_distribution][:frustrado]}
+      - Neutros (score 3): #{financial_context[:sentiment_distribution][:neutro]}
+      - Positivos (score 1-2): #{financial_context[:sentiment_distribution][:positivo]}
+
+      Customers com churn (churned): #{financial_context[:churned_count]}
+      Customers em risco (at_risk): #{financial_context[:at_risk_count]}
+      Receita perdida (MRR de churned): R$ #{financial_context[:revenue_lost]}
+      Receita em risco (MRR de at_risk): R$ #{financial_context[:revenue_at_risk]}
+
+      Exemplos de conversas:
+      #{@classification.full_text_of_conversations.truncate(3000)}
+    CTX
+
+    prompt_text = Improvement::PRESCRIPTIVE_PROMPT % { context_data: context_data }
+
+    llm = RubyLLM.chat
+    response = llm
+      .with_instructions(prompt_text)
+      .ask("Gere o roadmap prescritivo para o problema: #{@classification.tag}")
+
+    @improvement = Improvement.create!(
+      user: current_user,
+      classification: @classification,
+      content: response.content
+    )
+
     @ia_root_cause = generate_root_cause(@conversations)
   end
 
   private
+
+  def pareto_classifications_with_financial_data
+    volume_rows = Conversation
+      .joins(:classification)
+      .select(
+        "classifications.tag AS tag,
+        COUNT(*) AS conv_count,
+        ROUND(100.0 * COUNT(*) / SUM(COUNT(*)) OVER ()) AS pct,
+        ROUND(100.0 * SUM(COUNT(*)) OVER (
+          ORDER BY COUNT(*) DESC, classifications.tag ASC
+          ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+        ) / SUM(COUNT(*)) OVER ()) AS cum_pct,
+        ROUND(100.0 * SUM(COUNT(*)) OVER (
+          ORDER BY COUNT(*) DESC, classifications.tag ASC
+          ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+        ) / SUM(COUNT(*)) OVER (), 2) AS cum_pct_2"
+      )
+      .group("classifications.tag")
+      .order("conv_count DESC, classifications.tag ASC")
+
+    tags = volume_rows.map(&:tag)
+    return [] if tags.blank?
+
+    total_customers_by_tag = Conversation
+      .joins(:classification)
+      .where(classifications: { tag: tags })
+      .where.not(customer_id: nil)
+      .group("classifications.tag")
+      .distinct
+      .count(:customer_id)
+
+    churned_by_tag = Conversation
+      .joins(:classification, :customer)
+      .where(classifications: { tag: tags }, customers: { status: "churned" })
+      .group("classifications.tag")
+      .distinct
+      .count(:customer_id)
+
+    revenue_lost_by_tag = Customer
+      .joins(conversations: :classification)
+      .where(customers: { status: "churned" }, classifications: { tag: tags })
+      .group("classifications.tag")
+      .distinct
+      .sum("customers.mrr")
+
+    revenue_at_risk_by_tag = Customer
+      .joins(conversations: :classification)
+      .where(customers: { status: "at_risk" }, classifications: { tag: tags })
+      .group("classifications.tag")
+      .distinct
+      .sum("customers.mrr")
+
+    avg_sentiment_by_tag = Conversation
+      .joins(:classification)
+      .where(classifications: { tag: tags })
+      .where.not(sentiment_score: nil)
+      .group("classifications.tag")
+      .average(:sentiment_score)
+
+    enriched = volume_rows.map do |row|
+      tag = row.tag
+      total_cust = total_customers_by_tag[tag].to_i
+      churn_count = churned_by_tag[tag].to_i
+      churn_rate = total_cust.positive? ? ((churn_count.to_f / total_cust) * 100).round(1) : 0.0
+      rev_lost = revenue_lost_by_tag[tag].to_f.round(2)
+      rev_at_risk = revenue_at_risk_by_tag[tag].to_f.round(2)
+      avg_sent = avg_sentiment_by_tag[tag].to_f.round(2)
+
+      {
+        tag: tag,
+        count: row.conv_count.to_i,
+        pct: row.pct.to_i,
+        cum_pct: row.cum_pct.to_i,
+        cum_pct_2: row.cum_pct_2.to_f,
+        churn_count: churn_count,
+        churn_rate: churn_rate,
+        revenue_at_risk: rev_at_risk,
+        revenue_lost: rev_lost,
+        avg_sentiment: avg_sent
+      }
+    end
+
+    pareto_items = enriched.select { |r| r[:cum_pct_2] <= 80.00 }
+
+    max_rev_lost = pareto_items.map { |r| r[:revenue_lost] }.max.to_f
+    max_avg_sent = pareto_items.map { |r| r[:avg_sentiment] }.max.to_f
+
+    pareto_items.each do |item|
+      norm_rev_lost = max_rev_lost.positive? ? (item[:revenue_lost] / max_rev_lost) : 0.0
+      norm_avg_sent = max_avg_sent.positive? ? (item[:avg_sentiment] / max_avg_sent) : 0.0
+      item[:priority_score] = (
+        (item[:churn_rate] / 100.0 * 0.4) +
+        (norm_rev_lost * 0.3) +
+        (norm_avg_sent * 0.3)
+      ).round(3)
+    end
+
+    pareto_items.sort_by { |r| -r[:priority_score] }
+  end
+
+  def build_classification_financial_context(classification)
+    conversations = classification.conversations
+    total = conversations.count
+
+    avg_sentiment = conversations.where.not(sentiment_score: nil).average(:sentiment_score).to_f.round(2)
+
+    critico = conversations.where(sentiment_score: 5).count
+    frustrado = conversations.where(sentiment_score: 4).count
+    neutro = conversations.where(sentiment_score: 3).count
+    positivo = conversations.where(sentiment_score: [1, 2]).count
+
+    churned_customers = Customer
+      .joins(:conversations)
+      .where(conversations: { classification_id: classification.id }, customers: { status: "churned" })
+      .distinct
+
+    at_risk_customers = Customer
+      .joins(:conversations)
+      .where(conversations: { classification_id: classification.id }, customers: { status: "at_risk" })
+      .distinct
+
+    {
+      total_conversations: total,
+      avg_sentiment: avg_sentiment,
+      sentiment_distribution: {
+        critico: critico,
+        frustrado: frustrado,
+        neutro: neutro,
+        positivo: positivo
+      },
+      churned_count: churned_customers.count,
+      at_risk_count: at_risk_customers.count,
+      revenue_lost: churned_customers.sum(:mrr).to_f.round(2),
+      revenue_at_risk: at_risk_customers.sum(:mrr).to_f.round(2)
+    }
+  end
 
   def build_classification_table
     all_tags = Classification.joins(:conversations).distinct
@@ -169,54 +327,28 @@ class ClassificationsController < ApplicationController
     end.compact.sort_by { |r| -r.priority_score }
   end
 
-  def pareto_classifications
-    rows = Conversation
-      .joins(:classification)
-      .select(
-        "classifications.tag AS tag,
-        COUNT(*) AS count,
-        ROUND(
-          100.0 * COUNT(*) / SUM(COUNT(*)) OVER ()
-        ) AS pct,
-        ROUND(
-          100.0 * SUM(COUNT(*)) OVER (
-            ORDER BY COUNT(*) DESC, classifications.tag ASC
-            ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
-          )
-          / SUM(COUNT(*)) OVER ()
-        ) AS cum_pct,
-        ROUND(
-          100.0 * SUM(COUNT(*)) OVER (
-            ORDER BY COUNT(*) DESC, classifications.tag ASC
-            ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
-          )
-          / SUM(COUNT(*)) OVER (),
-        2
-        ) AS cum_pct_2"
-      )
-      .group("classifications.tag")
-      .order("count DESC, classifications.tag ASC")
-
-    rows.select { |r| r.cum_pct_2.to_f <= 80.00 }
-  end
-
   def generate_root_cause(conversations)
     texto = conversations.map { |c| c.content }.join("\n")
     prompt = <<~PROMPT
-     Você é um analista sênior especializado em diagnóstico de causa raiz.
-    Analise as conversas abaixo e gere um diagnóstico extremamente curto, direto e técnico.
+      Você é um analista sênior especializado em diagnóstico de causa raiz.
+      Analise as conversas abaixo e gere um diagnóstico extremamente curto, direto e técnico.
 
-    O resultado deve ter:
-    • no máximo 2 frases
-    • foco total na causa raiz
-    • linguagem objetiva, sem floreios
-    • mencionar de forma clara o mecanismo do erro
+      O resultado deve ter:
+      • no máximo 2 frases
+      • foco total na causa raiz
+      • linguagem objetiva, sem floreios
+      • mencionar de forma clara o mecanismo do erro (ex: falha de processo, atraso logístico, erro de sistema, política inadequada, comunicação incorreta etc.)
 
-    NÃO retorne lista, bullet points ou textos longos.
-    NÃO explique o que está fazendo.
+      NÃO retorne lista, bullet points ou textos longos.
+      NÃO explique o que está fazendo.
 
-    Conversas analisadas:
-    #{texto}
+      Exemplo do estilo desejado:
+      "Usuários com Android 14 estão enfrentando freeze no pagamento via PIX devido a incompatibilidade entre o WebView atualizado e a biblioteca de pagamentos atual."
+
+      Agora gere UM diagnóstico nesse mesmo estilo:
+
+      Conversas analisadas:
+      #{texto}
     PROMPT
 
     llm = RubyLLM.chat
