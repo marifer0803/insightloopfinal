@@ -1,22 +1,11 @@
 <% messages.each do |message| %>
   <% if message.role == "user" %>
     <div class="ai-bubble ai-bubble--user scroll-margin-top" data-controller="auto-scroll">
-      <%# <div class="il-chat-bubble il-chat-bubble-user">
-        <div class="il-chat-meta">You</div>
-        <div class="il-chat-content"> %>
-          <%= message.content %>
-        <%# </div>
-      </div> %>
+      <%= message.content %>
     </div>
   <% elsif message.role == "assistant" %>
     <div class="ai-bubble ai-bubble--assistant">
-      <%# <div class="il-chat-bubble il-chat-bubble-assistant">
-        <div class="il-chat-meta">Insight Loop AI</div>
-        <div class="il-chat-content"> %>
-          <%# <div class="ai-md"> %>
-          <%= render_markdown(message.content) %>
-        <%# </div>
-      </div> %>
+      <%= render_markdown(message.content) %>
     </div>
   <% end %>
 <% end %>

@@ -7,53 +7,45 @@ class ClassificationsController < ApplicationController
     @trend_series = conversation_trends_for(pareto_tags)
 
     days = 7
-      current_start  = (days - 1).days.ago.to_date
-      current_end    = Date.current
-      previous_start = (2 * days - 1).days.ago.to_date
-      previous_end   = days.days.ago.to_date
+    current_start  = (days - 1).days.ago.to_date
+    current_end    = Date.current
+    previous_start = (2 * days - 1).days.ago.to_date
+    previous_end   = days.days.ago.to_date
 
-      current_counts = Conversation
-        .joins(:classification)
-        .where(classifications: { tag: pareto_tags })
-        .where(occurred_on: current_start..current_end)
-        .group(“classifications.tag”)
-        .count
+    current_counts = Conversation
+      .joins(:classification)
+      .where(classifications: { tag: pareto_tags })
+      .where(occurred_on: current_start..current_end)
+      .group("classifications.tag")
+      .count
 
-      previous_counts = Conversation
-        .joins(:classification)
-        .where(classifications: { tag: pareto_tags })
-        .where(occurred_on: previous_start..previous_end)
-        .group(“classifications.tag”)
-        .count
+    previous_counts = Conversation
+      .joins(:classification)
+      .where(classifications: { tag: pareto_tags })
+      .where(occurred_on: previous_start..previous_end)
+      .group("classifications.tag")
+      .count
 
-      @growth_by_tag = pareto_tags.index_with do |tag|
-        curr = current_counts[tag].to_i
-        prev = previous_counts[tag].to_i
+    @growth_by_tag = pareto_tags.index_with do |tag|
+      curr = current_counts[tag].to_i
+      prev = previous_counts[tag].to_i
+      prev.zero? ? 0 : (((curr - prev) / prev.to_f) * 100).round
+    end
 
-        if prev.zero?
-          0
-        else
-          (((curr - prev) / prev.to_f) * 100).round
-        end
-      end
+    @pareto.each do |item|
+      item[:growth] = @growth_by_tag[item[:tag]].to_i
+    end
 
-      @pareto.each do |item|
-        item[:growth] = @growth_by_tag[item[:tag]].to_i
-      end
-
-    # Get counts by tag, excluding blank tags (optional)
     counts_hash = Conversation
                     .joins(:classification)
-                    .where.not(classifications: { tag: [nil, “”] })
-                    .group(“classifications.tag”)
-                    .order(Arel.sql(“COUNT(*) DESC”))
+                    .where.not(classifications: { tag: [nil, ""] })
+                    .group("classifications.tag")
+                    .order(Arel.sql("COUNT(*) DESC"))
                     .count
 
-    # labels (tags) and counts array (already sorted descending by DB)
     @chart_labels = counts_hash.keys
     @chart_counts = counts_hash.values.map(&:to_i)
 
-    # compute cumulative percentage on Ruby side
     total = @chart_counts.sum.nonzero? || 1
     cumulative = []
     running = 0.0
@@ -62,9 +54,18 @@ class ClassificationsController < ApplicationController
       cumulative << ((running / total) * 100).round(0)
     end
     @chart_cumulative = cumulative
+
+    # Real KPIs
+    @total_conversations = Conversation.count
+    @avg_sentiment = Conversation.where.not(sentiment_score: nil).average(:sentiment_score)&.round(1) || 0
+    @revenue_at_risk = Customer.where(status: "at_risk").sum(:mrr)
+    @revenue_lost = Customer.where(status: "churned").sum(:mrr)
+
+    # Classification table with real metrics
+    @classification_rows = build_classification_table
   end
 
-   def show
+  def show
     @classification = Classification.find(params[:id])
 
     trend_hash = conversation_trends_for([@classification.tag])
@@ -74,191 +75,185 @@ class ClassificationsController < ApplicationController
     raw_values = trend[:values]
     @values = smooth_values(raw_values)
 
-
-  bucket_definitions = {
-    "Dia 1"  => (0..3),
-    "Dia 5"  => (4..8),
-    "Dia 10" => (9..13),
-    "Dia 15" => (14..18),
-    "Dia 20" => (19..23),
-    "Dia 25" => (24..28),
-    "Dia 30" => (29..29)
-  }
-
-  @volume_points = bucket_definitions.map do |label, range|
-    {
-      label: label,
-      count: raw_values[range].compact.sum
+    bucket_definitions = {
+      "Dia 1"  => (0..3),
+      "Dia 5"  => (4..8),
+      "Dia 10" => (9..13),
+      "Dia 15" => (14..18),
+      "Dia 20" => (19..23),
+      "Dia 25" => (24..28),
+      "Dia 30" => (29..29)
     }
-  end
 
-  first_bucket = @volume_points.first[:count]
-  last_bucket  = @volume_points.last[:count]
-
-  @volume_change_pct =
-    if first_bucket.positive?
-      (((last_bucket - first_bucket) * 100.0) / first_bucket).round
-    else
-      nil
+    @volume_points = bucket_definitions.map do |label, range|
+      {
+        label: label,
+        count: raw_values[range].compact.sum
+      }
     end
 
-   @conversations = @classification.conversations
-                                 .order(created_at: :desc)
-                                 .limit(3)
+    first_bucket = @volume_points.first[:count]
+    last_bucket  = @volume_points.last[:count]
 
-  # Build financial/sentiment context for this classification
-  financial_context = build_classification_financial_context(@classification)
+    @volume_change_pct =
+      if first_bucket.positive?
+        (((last_bucket - first_bucket) * 100.0) / first_bucket).round
+      else
+        nil
+      end
 
-  # Always delete old improvements and regenerate with enriched prompt
-  @classification.improvements.destroy_all
+    # Real volume percentage
+    total_convos = Conversation.count
+    classification_convos = @classification.conversations.count
+    @volume_pct = total_convos.positive? ? ((classification_convos * 100.0) / total_convos).round : 0
 
-  context_data = <<~CTX
-    Classificação: #{@classification.tag}
-    Total de conversas: #{financial_context[:total_conversations]}
+    @conversations = @classification.conversations
+                                  .order(created_at: :desc)
+                                  .limit(3)
 
-    Sentimento médio: #{financial_context[:avg_sentiment]} / 5.0
-    Distribuição de sentimento:
-    - Críticos (score 5): #{financial_context[:sentiment_distribution][:critico]}
-    - Frustrados (score 4): #{financial_context[:sentiment_distribution][:frustrado]}
-    - Neutros (score 3): #{financial_context[:sentiment_distribution][:neutro]}
-    - Positivos (score 1-2): #{financial_context[:sentiment_distribution][:positivo]}
+    # Build financial/sentiment context for this classification
+    financial_context = build_classification_financial_context(@classification)
 
-    Customers com churn (churned): #{financial_context[:churned_count]}
-    Customers em risco (at_risk): #{financial_context[:at_risk_count]}
-    Receita perdida (MRR de churned): R$ #{financial_context[:revenue_lost]}
-    Receita em risco (MRR de at_risk): R$ #{financial_context[:revenue_at_risk]}
+    # Always delete old improvements and regenerate with enriched prompt
+    @classification.improvements.destroy_all
 
-    Exemplos de conversas:
-    #{@classification.full_text_of_conversations.truncate(3000)}
-  CTX
+    context_data = <<~CTX
+      Classificação: #{@classification.tag}
+      Total de conversas: #{financial_context[:total_conversations]}
 
-  prompt_text = Improvement::PRESCRIPTIVE_PROMPT % { context_data: context_data }
+      Sentimento médio: #{financial_context[:avg_sentiment]} / 5.0
+      Distribuição de sentimento:
+      - Críticos (score 5): #{financial_context[:sentiment_distribution][:critico]}
+      - Frustrados (score 4): #{financial_context[:sentiment_distribution][:frustrado]}
+      - Neutros (score 3): #{financial_context[:sentiment_distribution][:neutro]}
+      - Positivos (score 1-2): #{financial_context[:sentiment_distribution][:positivo]}
 
-  llm = RubyLLM.chat
-  response = llm
-    .with_instructions(prompt_text)
-    .ask("Gere o roadmap prescritivo para o problema: #{@classification.tag}")
+      Customers com churn (churned): #{financial_context[:churned_count]}
+      Customers em risco (at_risk): #{financial_context[:at_risk_count]}
+      Receita perdida (MRR de churned): R$ #{financial_context[:revenue_lost]}
+      Receita em risco (MRR de at_risk): R$ #{financial_context[:revenue_at_risk]}
 
-  @improvement = Improvement.create!(
-    user: current_user,
-    classification: @classification,
-    content: response.content
-  )
+      Exemplos de conversas:
+      #{@classification.full_text_of_conversations.truncate(3000)}
+    CTX
 
-  @ia_root_cause = generate_root_cause(@conversations)
+    prompt_text = Improvement::PRESCRIPTIVE_PROMPT % { context_data: context_data }
 
-end
+    llm = RubyLLM.chat
+    response = llm
+      .with_instructions(prompt_text)
+      .ask("Gere o roadmap prescritivo para o problema: #{@classification.tag}")
+
+    @improvement = Improvement.create!(
+      user: current_user,
+      classification: @classification,
+      content: response.content
+    )
+
+    @ia_root_cause = generate_root_cause(@conversations)
+  end
 
   private
 
-def pareto_classifications_with_financial_data
-  # Base volume data per classification tag
-  volume_rows = Conversation
-    .joins(:classification)
-    .select(
-      "classifications.tag AS tag,
-      COUNT(*) AS conv_count,
-      ROUND(100.0 * COUNT(*) / SUM(COUNT(*)) OVER ()) AS pct,
-      ROUND(100.0 * SUM(COUNT(*)) OVER (
-        ORDER BY COUNT(*) DESC, classifications.tag ASC
-        ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
-      ) / SUM(COUNT(*)) OVER ()) AS cum_pct,
-      ROUND(100.0 * SUM(COUNT(*)) OVER (
-        ORDER BY COUNT(*) DESC, classifications.tag ASC
-        ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
-      ) / SUM(COUNT(*)) OVER (), 2) AS cum_pct_2"
-    )
-    .group("classifications.tag")
-    .order("conv_count DESC, classifications.tag ASC")
+  def pareto_classifications_with_financial_data
+    volume_rows = Conversation
+      .joins(:classification)
+      .select(
+        "classifications.tag AS tag,
+        COUNT(*) AS conv_count,
+        ROUND(100.0 * COUNT(*) / SUM(COUNT(*)) OVER ()) AS pct,
+        ROUND(100.0 * SUM(COUNT(*)) OVER (
+          ORDER BY COUNT(*) DESC, classifications.tag ASC
+          ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+        ) / SUM(COUNT(*)) OVER ()) AS cum_pct,
+        ROUND(100.0 * SUM(COUNT(*)) OVER (
+          ORDER BY COUNT(*) DESC, classifications.tag ASC
+          ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+        ) / SUM(COUNT(*)) OVER (), 2) AS cum_pct_2"
+      )
+      .group("classifications.tag")
+      .order("conv_count DESC, classifications.tag ASC")
 
-  tags = volume_rows.map(&:tag)
-  return [] if tags.blank?
+    tags = volume_rows.map(&:tag)
+    return [] if tags.blank?
 
-  # Distinct customers per tag
-  total_customers_by_tag = Conversation
-    .joins(:classification)
-    .where(classifications: { tag: tags })
-    .where.not(customer_id: nil)
-    .group("classifications.tag")
-    .distinct
-    .count(:customer_id)
+    total_customers_by_tag = Conversation
+      .joins(:classification)
+      .where(classifications: { tag: tags })
+      .where.not(customer_id: nil)
+      .group("classifications.tag")
+      .distinct
+      .count(:customer_id)
 
-  # Churned customers per tag
-  churned_by_tag = Conversation
-    .joins(:classification, :customer)
-    .where(classifications: { tag: tags }, customers: { status: "churned" })
-    .group("classifications.tag")
-    .distinct
-    .count(:customer_id)
+    churned_by_tag = Conversation
+      .joins(:classification, :customer)
+      .where(classifications: { tag: tags }, customers: { status: "churned" })
+      .group("classifications.tag")
+      .distinct
+      .count(:customer_id)
 
-  # Revenue lost (MRR of churned customers) per tag
-  revenue_lost_by_tag = Customer
-    .joins(conversations: :classification)
-    .where(customers: { status: "churned" }, classifications: { tag: tags })
-    .group("classifications.tag")
-    .distinct
-    .sum("customers.mrr")
+    revenue_lost_by_tag = Customer
+      .joins(conversations: :classification)
+      .where(customers: { status: "churned" }, classifications: { tag: tags })
+      .group("classifications.tag")
+      .distinct
+      .sum("customers.mrr")
 
-  # Revenue at risk (MRR of at_risk customers) per tag
-  revenue_at_risk_by_tag = Customer
-    .joins(conversations: :classification)
-    .where(customers: { status: "at_risk" }, classifications: { tag: tags })
-    .group("classifications.tag")
-    .distinct
-    .sum("customers.mrr")
+    revenue_at_risk_by_tag = Customer
+      .joins(conversations: :classification)
+      .where(customers: { status: "at_risk" }, classifications: { tag: tags })
+      .group("classifications.tag")
+      .distinct
+      .sum("customers.mrr")
 
-  # Average sentiment per tag
-  avg_sentiment_by_tag = Conversation
-    .joins(:classification)
-    .where(classifications: { tag: tags })
-    .where.not(sentiment_score: nil)
-    .group("classifications.tag")
-    .average(:sentiment_score)
+    avg_sentiment_by_tag = Conversation
+      .joins(:classification)
+      .where(classifications: { tag: tags })
+      .where.not(sentiment_score: nil)
+      .group("classifications.tag")
+      .average(:sentiment_score)
 
-  # Build enriched data
-  enriched = volume_rows.map do |row|
-    tag = row.tag
-    total_cust = total_customers_by_tag[tag].to_i
-    churn_count = churned_by_tag[tag].to_i
-    churn_rate = total_cust.positive? ? ((churn_count.to_f / total_cust) * 100).round(1) : 0.0
-    rev_lost = revenue_lost_by_tag[tag].to_f.round(2)
-    rev_at_risk = revenue_at_risk_by_tag[tag].to_f.round(2)
-    avg_sent = avg_sentiment_by_tag[tag].to_f.round(2)
+    enriched = volume_rows.map do |row|
+      tag = row.tag
+      total_cust = total_customers_by_tag[tag].to_i
+      churn_count = churned_by_tag[tag].to_i
+      churn_rate = total_cust.positive? ? ((churn_count.to_f / total_cust) * 100).round(1) : 0.0
+      rev_lost = revenue_lost_by_tag[tag].to_f.round(2)
+      rev_at_risk = revenue_at_risk_by_tag[tag].to_f.round(2)
+      avg_sent = avg_sentiment_by_tag[tag].to_f.round(2)
 
-    {
-      tag: tag,
-      count: row.conv_count.to_i,
-      pct: row.pct.to_i,
-      cum_pct: row.cum_pct.to_i,
-      cum_pct_2: row.cum_pct_2.to_f,
-      churn_count: churn_count,
-      churn_rate: churn_rate,
-      revenue_at_risk: rev_at_risk,
-      revenue_lost: rev_lost,
-      avg_sentiment: avg_sent
-    }
+      {
+        tag: tag,
+        count: row.conv_count.to_i,
+        pct: row.pct.to_i,
+        cum_pct: row.cum_pct.to_i,
+        cum_pct_2: row.cum_pct_2.to_f,
+        churn_count: churn_count,
+        churn_rate: churn_rate,
+        revenue_at_risk: rev_at_risk,
+        revenue_lost: rev_lost,
+        avg_sentiment: avg_sent
+      }
+    end
+
+    pareto_items = enriched.select { |r| r[:cum_pct_2] <= 80.00 }
+
+    max_rev_lost = pareto_items.map { |r| r[:revenue_lost] }.max.to_f
+    max_avg_sent = pareto_items.map { |r| r[:avg_sentiment] }.max.to_f
+
+    pareto_items.each do |item|
+      norm_rev_lost = max_rev_lost.positive? ? (item[:revenue_lost] / max_rev_lost) : 0.0
+      norm_avg_sent = max_avg_sent.positive? ? (item[:avg_sentiment] / max_avg_sent) : 0.0
+      item[:priority_score] = (
+        (item[:churn_rate] / 100.0 * 0.4) +
+        (norm_rev_lost * 0.3) +
+        (norm_avg_sent * 0.3)
+      ).round(3)
+    end
+
+    pareto_items.sort_by { |r| -r[:priority_score] }
   end
 
-  # Filter to 80% Pareto
-  pareto_items = enriched.select { |r| r[:cum_pct_2] <= 80.00 }
-
-  # Compute composite priority score
-  max_rev_lost = pareto_items.map { |r| r[:revenue_lost] }.max.to_f
-  max_avg_sent = pareto_items.map { |r| r[:avg_sentiment] }.max.to_f
-
-  pareto_items.each do |item|
-    norm_rev_lost = max_rev_lost.positive? ? (item[:revenue_lost] / max_rev_lost) : 0.0
-    norm_avg_sent = max_avg_sent.positive? ? (item[:avg_sentiment] / max_avg_sent) : 0.0
-    item[:priority_score] = (
-      (item[:churn_rate] / 100.0 * 0.4) +
-      (norm_rev_lost * 0.3) +
-      (norm_avg_sent * 0.3)
-    ).round(3)
-  end
-
-  # Sort by priority_score descending
-  pareto_items.sort_by { |r| -r[:priority_score] }
-end
   def build_classification_financial_context(classification)
     conversations = classification.conversations
     total = conversations.count
@@ -296,35 +291,70 @@ end
     }
   end
 
+  def build_classification_table
+    all_tags = Classification.joins(:conversations).distinct
+
+    all_tags.map do |classification|
+      convos = classification.conversations
+      volume = convos.count
+      next if volume.zero?
+
+      avg_sentiment = convos.where.not(sentiment_score: nil).average(:sentiment_score)&.round(1) || 0
+
+      customer_ids = convos.where.not(customer_id: nil).pluck(:customer_id).uniq
+      if customer_ids.any?
+        customers = Customer.where(id: customer_ids)
+        total_customers = customers.count
+        churned_customers = customers.where(status: "churned").count
+        churn_rate = total_customers.positive? ? ((churned_customers * 100.0) / total_customers).round(1) : 0
+        revenue_lost = customers.where(status: "churned").sum(:mrr)
+      else
+        churn_rate = 0
+        revenue_lost = 0
+      end
+
+      priority_score = (volume * 0.3) + (avg_sentiment * 0.25) + (churn_rate * 0.25) + ((revenue_lost / 100.0) * 0.2)
+
+      OpenStruct.new(
+        id: classification.id,
+        tag: classification.tag,
+        volume: volume,
+        avg_sentiment: avg_sentiment,
+        churn_rate: churn_rate,
+        revenue_lost: revenue_lost,
+        priority_score: priority_score.round(1)
+      )
+    end.compact.sort_by { |r| -r.priority_score }
+  end
+
   def generate_root_cause(conversations)
-  texto = conversations.map { |c| c.content }.join("\n")
-  prompt = <<~PROMPT
-   Você é um analista sênior especializado em diagnóstico de causa raiz.
-  Analise as conversas abaixo e gere um diagnóstico extremamente curto, direto e técnico.
+    texto = conversations.map { |c| c.content }.join("\n")
+    prompt = <<~PROMPT
+      Você é um analista sênior especializado em diagnóstico de causa raiz.
+      Analise as conversas abaixo e gere um diagnóstico extremamente curto, direto e técnico.
 
-  O resultado deve ter:
-  • no máximo 2 frases
-  • foco total na causa raiz
-  • linguagem objetiva, sem floreios
-  • mencionar de forma clara o mecanismo do erro (ex: falha de processo, atraso logístico, erro de sistema, política inadequada, comunicação incorreta etc.)
+      O resultado deve ter:
+      • no máximo 2 frases
+      • foco total na causa raiz
+      • linguagem objetiva, sem floreios
+      • mencionar de forma clara o mecanismo do erro (ex: falha de processo, atraso logístico, erro de sistema, política inadequada, comunicação incorreta etc.)
 
-  NÃO retorne lista, bullet points ou textos longos.
-  NÃO explique o que está fazendo.
+      NÃO retorne lista, bullet points ou textos longos.
+      NÃO explique o que está fazendo.
 
-  Exemplo do estilo desejado:
-  "Usuários com Android 14 estão enfrentando freeze no pagamento via PIX devido a incompatibilidade entre o WebView atualizado e a biblioteca de pagamentos atual."
+      Exemplo do estilo desejado:
+      "Usuários com Android 14 estão enfrentando freeze no pagamento via PIX devido a incompatibilidade entre o WebView atualizado e a biblioteca de pagamentos atual."
 
-  Agora gere UM diagnóstico nesse mesmo estilo:
+      Agora gere UM diagnóstico nesse mesmo estilo:
 
-  Conversas analisadas:
-  #{texto}
-  PROMPT
+      Conversas analisadas:
+      #{texto}
+    PROMPT
 
-  llm = RubyLLM.chat
-  resposta = llm.ask(prompt)
-
-  resposta.content
-end
+    llm = RubyLLM.chat
+    resposta = llm.ask(prompt)
+    resposta.content
+  end
 
   def smooth_values(values)
     return values if values.blank?
@@ -364,12 +394,12 @@ end
     end
 
     trends.transform_values do |per_day_hash|
-    all_dates = (start_date..end_date).to_a
+      all_dates = (start_date..end_date).to_a
 
-    {
-      labels: all_dates.each_with_index.map { |_, idx| "Dia #{idx + 1}" },
-      values: all_dates.map { |d| per_day_hash[d] || 0 }
-    }
+      {
+        labels: all_dates.each_with_index.map { |_, idx| "Dia #{idx + 1}" },
+        values: all_dates.map { |d| per_day_hash[d] || 0 }
+      }
     end
   end
 end

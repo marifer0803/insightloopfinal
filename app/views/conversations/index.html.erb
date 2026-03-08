@@ -1,69 +1,51 @@
-<%
-  customer_names = [
-    "Maria Silva", "Carlos Mendes", "João Santos",
-    "Ana Costa", "Aline K.", "Diego Z.",
-    "Eduardo N.", "Thiago B."
-  ]
-
-  customer_moods = ["Confuso", "Frustrado", "Aguardando", "Nervoso", "Preocupado"]
-
-  conversation_statuses = ["Ativa", "Pendente", "Resolvida"]
-  conversation_priorities = ["Alta", "Média", "Baixa"]
-%>
-
-      <div class="conversations-page">
-      <%= link_to dashboard_path, class: "back-link" do %>
-      <i class="fa-solid fa-arrow-left-long"></i>
-      <% end %>
+<div class="conversations-page">
+  <%= link_to dashboard_path, class: "back-link" do %>
+    <i class="fa-solid fa-arrow-left-long"></i>
+  <% end %>
   <h1 class="conversations-title">Todas as Conversas</h1>
 
+  <% sentiment_colors = { "positivo" => "badge-soft-success", "neutro" => "badge-soft-gray", "frustrado" => "badge-soft-warn", "crítico" => "badge-soft-danger" } %>
 
   <% @conversations.each do |conversation| %>
     <div class="conversation-item">
 
-      <!-- ESQUERDA -->
+      <!-- LEFT -->
       <div class="conversation-left">
         <div class="conversation-avatar">
-          <%= customer_names[conversation.id % customer_names.size].first %>
+          <%= conversation.customer&.name&.first || "?" %>
         </div>
 
         <div class="conversation-content">
 
-          <!-- NOME + STATUS + PRIORIDADE -->
           <p class="conversation-name">
-            <%= customer_names[conversation.id % customer_names.size] %>
+            <%= conversation.customer&.name.presence || "Cliente não identificado" %>
 
-           <span class="badge status <%= conversation_statuses[conversation.id % conversation_statuses. size].parameterize %>">
-              <%= conversation_statuses[conversation.id % conversation_statuses.size] %>
-            </span>
+            <% sentiment = conversation.sentiment_label.to_s %>
+            <% if sentiment.present? %>
+              <span class="badge <%= sentiment_colors[sentiment] || 'badge-soft-gray' %>">
+                <%= sentiment.capitalize %>
+              </span>
+            <% end %>
+          </p>
 
-
-            <span class="badge priority <%= conversation_priorities[conversation.id % conversation_priorities.size].parameterize %>">
-            <%= conversation_priorities[conversation.id % conversation_priorities.size] %>
-            </span>
-
-
-          <!-- CLASSIFICAÇÃO -->
           <p class="conversation-subtitle">
-            <%= conversation.classification&.tag %>
+            <% if conversation.classification&.tag.present? %>
+              <span class="badge badge-soft-gray"><%= conversation.classification.tag %></span>
+            <% end %>
+            <% if conversation.channel.present? %>
+              <span class="text-muted"><%= conversation.channel %></span>
+            <% end %>
+            <span class="text-muted"><%= conversation.occurred_on.strftime("%d/%m/%Y") %></span>
           </p>
 
-          <!-- PREVIEW -->
           <p class="conversation-preview">
-            <%= conversation.content.to_s.lines.first
-                  .gsub(/\[.*?\]:/, "")
-                  .strip %>
+            <%= conversation.content.to_s.truncate(100) %>
           </p>
-
-          <!-- ESTADO EMOCIONAL -->
-         <span class="badge mood <%= customer_moods[conversation.id % customer_moods.size].parameterize%>">
-              <%= customer_moods[conversation.id % customer_moods.size] %>
-          </span>
 
         </div>
       </div>
 
-      <!-- DIREITA (AÇÃO) -->
+      <!-- RIGHT -->
       <div class="conversation-right">
         <%= link_to conversation_path(conversation),
               class: "conversation-arrow" do %>

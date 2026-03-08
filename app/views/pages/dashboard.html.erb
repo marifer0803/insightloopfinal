@@ -1,21 +1,11 @@
 <div class="dashboard-page">
-  <!-- Header simples do dashboard -->
   <header class="dashboard-header">
     <div>
       <h1 class="dashboard-header__title"></h1>
       <p class="dashboard-header__subtitle"></p>
     </div>
 
-     <!-- <button class="dashboard-header__filter-button">
-      Últimos 7 dias
-    </button> OLD VERSION -->
-
-    <!-- NEW VERSION -->
     <div class="dashboard-header__date-filter">
-      <!-- <button class="dashboard-header__filter-button" id="dateFilterBtn">
-        Últimos 7 dias
-      </button> -->
-
       <div class="date-filter__dropdown" id="dateFilterDropdown">
         <button
           data-range="7d"
@@ -37,211 +27,179 @@
         <div class="date-filter__divider"></div>
 
         <div class="date-filter__custom">
-
-<!-- <label>
-  Início
-  <input
-    type="text"
-    id="startDate"
-    value="<%= @start_date&.strftime('%Y-%m-%d') %>">
-</label>
-
-<script>
-  document.addEventListener("DOMContentLoaded", function () {
-    flatpickr("#startDate", {
-      dateFormat: "Y-m-d"
-    });
-  });
-</script>
-
           <label>
-            Fim
+            Período
             <input
-              type="date"
-              id="endDate"
-              value="<%= @end_date&.strftime('%Y-%m-%d') %>">
-          </label>  -->
+              type="text"
+              id="dateRange"
+              class="date-input"
+              placeholder="Selecione um período"
+              autocomplete="off"
+              value="<%= @start_date && @end_date ? "#{@start_date} → #{@end_date}" : "" %>">
+          </label>
 
-<label>
-  Período
-  <input
-    type="text"
-    id="dateRange"
-    class="date-input"
-    placeholder="Selecione um período"
-    autocomplete="off"
-    value="<%= @start_date && @end_date ? "#{@start_date} → #{@end_date}" : "" %>">
-</label>
-
-<input type="hidden" name="start_date" id="startDate" value="<%= @start_date %>">
-<input type="hidden" name="end_date" id="endDate" value="<%= @end_date %>">
-
-
-
+          <input type="hidden" name="start_date" id="startDate" value="<%= @start_date %>">
+          <input type="hidden" name="end_date" id="endDate" value="<%= @end_date %>">
         </div>
       </div>
     </div>
-    <!-- NEW VERSION ENDS -->
+
     <%= javascript_include_tag "date_range_store", defer: true %>
     <%= javascript_include_tag "date_filter", defer: true %>
     <%= javascript_include_tag "dashboard", defer: true %>
-
   </header>
 
-  <!-- CARDS KPI -->
+  <!-- KPI Cards -->
   <section class="dashboard-kpi-grid">
-    <!-- Questions & FAQ -->
+    <!-- Card 1: Total Conversations -->
     <article class="kpi-card kpi-card--questions">
       <div class="kpi-card__header">
         <div class="kpi-card__title">
-          <i class="kpi-card__icon fa-solid fa-question"></i>
-          Questions &amp; FAQ
+          <i class="kpi-card__icon fa-solid fa-comments"></i>
+          Total de Conversas
         </div>
-        <span class="kpi-card__pill kpi-card__pill--questions">42%</span>
       </div>
 
       <div class="kpi-card__body">
         <div>
-          <!-- <p class="kpi-card__value">847</p> -->
-          <p class="kpi-card__value"><%= @conversation_questions_count %></p>
-          <p class="kpi-card__hint">conversations this period</p>
+          <p class="kpi-card__value"><%= @total_conversations %></p>
+          <p class="kpi-card__hint">no período selecionado</p>
         </div>
 
-        <div class="kpi-card__divider">
-          <p class="kpi-card__section-label">Most common</p>
-          <p class="kpi-card__section-value">How to reset password</p>
-        </div>
-
-        <%= link_to "View FAQ Conversations",
+        <%= link_to "Ver Conversas",
             conversations_path,
             class: "kpi-card__button kpi-card__button--questions" %>
       </div>
     </article>
 
-    <!-- Complaints & Frictions -->
+    <!-- Card 2: Critical Sentiment -->
     <article class="kpi-card kpi-card--complaints">
       <div class="kpi-card__header">
         <div class="kpi-card__title">
           <i class="kpi-card__icon fa-solid fa-circle-exclamation"></i>
-          Complaints &amp; Frictions
+          Sentimento Crítico
         </div>
-        <span class="kpi-card__pill kpi-card__pill--complaints">31%</span>
       </div>
 
       <div class="kpi-card__body">
         <div>
-          <!-- <p class="kpi-card__value">623</p> -->
-          <p class="kpi-card__value"><%= @conversation_complaints_count %></p>
-          <p class="kpi-card__hint">conversations this period</p>
+          <p class="kpi-card__value"><%= @critical_sentiment_count %></p>
+          <p class="kpi-card__hint">conversas críticas ou frustradas</p>
         </div>
 
-        <div class="kpi-card__divider">
-          <p class="kpi-card__section-label">Top recurring</p>
-          <p class="kpi-card__section-value">Late Delivery</p>
-        </div>
-
-        <%= link_to "Open 80/20 Analysis",
+        <%= link_to "Análise 80/20",
             classifications_path,
             class: "kpi-card__button kpi-card__button--complaints" %>
-
       </div>
     </article>
 
-    <!-- Product Insights -->
+    <!-- Card 3: Revenue at Risk -->
     <article class="kpi-card kpi-card--product">
       <div class="kpi-card__header">
         <div class="kpi-card__title">
-          <i class="kpi-card__icon fa-regular fa-lightbulb"></i>
-          Product Insights
+          <i class="kpi-card__icon fa-solid fa-triangle-exclamation"></i>
+          Receita em Risco
         </div>
-        <span class="kpi-card__pill kpi-card__pill--product">27%</span>
       </div>
 
       <div class="kpi-card__body">
         <div>
-          <!-- <p class="kpi-card__value">542</p> -->
-          <p class="kpi-card__value"><%= @conversation_insights_count %></p>
-          <p class="kpi-card__hint">conversations this period</p>
+          <p class="kpi-card__value">R$ <%= number_with_delimiter(@revenue_at_risk.to_i) %></p>
+          <p class="kpi-card__hint">MRR de clientes at risk no período</p>
         </div>
 
-        <div class="kpi-card__divider">
-          <p class="kpi-card__section-label">Top feature request</p>
-          <p class="kpi-card__section-value">Dark mode request</p>
-        </div>
-
-        <button class="kpi-card__button kpi-card__button--product">
-          <%= link_to insight_list_conversations_path, class: "dashboard-item" do %>
-          <i class="fa-solid fa-lightbulb"></i>
-            <span>View Product Insights</span>
-          <% end %>
-        </button>
+        <%= link_to "Ver Análises",
+            classifications_path,
+            class: "kpi-card__button kpi-card__button--product" %>
       </div>
     </article>
   </section>
 
-<!-- GRÁFICO -->
-<section class="panel">
-  <div class="panel__header">
-    <h2 class="panel__title">Conversation Trend</h2>
-    <p class="panel__subtitle">
-      From <%= @start_date.strftime('%d %b %Y') %>
-      to <%= @end_date.strftime('%d %b %Y') %>
-    </p>
-  </div>
+  <!-- Top 3 Problems by Impact -->
+  <% if @top_problems.any? %>
+    <section class="panel">
+      <div class="panel__header">
+        <h2 class="panel__title">Top 3 Problemas por Impacto</h2>
+        <p class="panel__subtitle">Classificações com maior priority score no período</p>
+      </div>
 
-  <div
-    class="panel__body"
-    data-controller="weekly-conversation-chart"
-    data-weekly-conversation-chart-series-value="<%= @chart_data.to_json %>"
-  >
-    <canvas data-weekly-conversation-chart-target="canvas"></canvas>
-  </div>
-</section>
+      <div class="panel__body">
+        <div class="table-responsive">
+          <table class="table table-hover">
+            <thead>
+              <tr>
+                <th>Tag</th>
+                <th>Volume</th>
+                <th>Sentimento Médio</th>
+                <th>Receita Perdida</th>
+                <th>Priority Score</th>
+              </tr>
+            </thead>
+            <tbody>
+              <% @top_problems.each do |problem| %>
+                <tr>
+                  <td>
+                    <%= link_to problem.tag, classification_path(problem.id) %>
+                  </td>
+                  <td><%= problem.volume %></td>
+                  <td><%= problem.avg_sentiment %></td>
+                  <td>R$ <%= number_with_delimiter(problem.revenue_lost.to_i) %></td>
+                  <td><strong><%= problem.priority_score %></strong></td>
+                </tr>
+              <% end %>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  <% end %>
 
+  <!-- Chart -->
+  <section class="panel">
+    <div class="panel__header">
+      <h2 class="panel__title">Conversation Trend</h2>
+      <p class="panel__subtitle">
+        From <%= @start_date.strftime('%d %b %Y') %>
+        to <%= @end_date.strftime('%d %b %Y') %>
+      </p>
+    </div>
+
+    <div
+      class="panel__body"
+      data-controller="weekly-conversation-chart"
+      data-weekly-conversation-chart-series-value="<%= @chart_data.to_json %>"
+    >
+      <canvas data-weekly-conversation-chart-target="canvas"></canvas>
+    </div>
+  </section>
 </div>
-
 
 <script>
 document.addEventListener("turbo:load", function () {
-
-flatpickr("#dateRange", {
-  mode: "range",
-  showMonths: 2,
-
-  dateFormat: "Y-m-d",
-
-  altInput: true,
-  altFormat: "d M",
-
-  // 🔥 THIS IS THE FIX
-  locale: {
-    ...flatpickr.l10ns.pt,
-    rangeSeparator: " - "
-  },
-
-  closeOnSelect: false,
-  disableMobile: true,
-
-  defaultDate: [
-    "<%= @start_date %>",
-    "<%= @end_date %>"
-  ],
-
-  onChange(selectedDates) {
-    if (selectedDates.length !== 2) return;
-
-    const start = selectedDates[0];
-    const end   = selectedDates[1];
-
-    document.getElementById("startDate").value =
-      start.toISOString().slice(0, 10);
-
-    document.getElementById("endDate").value =
-      end.toISOString().slice(0, 10);
-
-    applyDateRange(start, end, "custom");
-  }
-});
-
+  flatpickr("#dateRange", {
+    mode: "range",
+    showMonths: 2,
+    dateFormat: "Y-m-d",
+    altInput: true,
+    altFormat: "d M",
+    locale: {
+      ...flatpickr.l10ns.pt,
+      rangeSeparator: " - "
+    },
+    closeOnSelect: false,
+    disableMobile: true,
+    defaultDate: [
+      "<%= @start_date %>",
+      "<%= @end_date %>"
+    ],
+    onChange(selectedDates) {
+      if (selectedDates.length !== 2) return;
+      const start = selectedDates[0];
+      const end   = selectedDates[1];
+      document.getElementById("startDate").value = start.toISOString().slice(0, 10);
+      document.getElementById("endDate").value = end.toISOString().slice(0, 10);
+      applyDateRange(start, end, "custom");
+    }
+  });
 });
 </script>

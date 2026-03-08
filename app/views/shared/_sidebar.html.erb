@@ -1,86 +1,43 @@
-<!-- app/views/shared/_sidebar.html.erb -->
 <aside class="sidebar" aria-label="Main navigation" role="navigation">
   <div class="brand">
     <div class="brand-text">
-<%= link_to home_path do %>
-  <h2>InsightLoop</h2>
-<% end %>
-      <!-- <p class="brand-subtitle">Customer Success</p>-->
+      <%= link_to home_path do %>
+        <h2>InsightLoop</h2>
+      <% end %>
     </div>
   </div>
 
   <div class="section">
-    <h4 class="section-title">Menu Principal</h4>
+    <h4 class="section-title">Menu</h4>
 
     <ul class="nav-list">
-      <li class="nav-item <%= 'active' if current_page?('/') %>">
-        <%= link_to '/', data: { nav: 'dashboard' }, aria: { current: (current_page?('/') ? 'page' : nil) } do %>
+      <li class="nav-item <%= 'active' if current_page?(root_path) || current_page?(dashboard_path) %>">
+        <%= link_to root_path do %>
           <span class="nav-icon"><i class="fa fa-th-large" aria-hidden="true"></i></span>
           <span class="nav-label">Dashboard</span>
         <% end %>
       </li>
 
-      <!-- <li class="nav-item <%= 'active' if current_page?('/smart_trainer') %>">
-        <%= link_to '/smart_trainer' do %>
-          <span class="nav-icon"><i class="fa fa-graduation-cap" aria-hidden="true"></i></span>
-          <span class="nav-label">Smart Trainer</span>
-        <% end %>
-      </li> -->
-
-      <li class="nav-item <%= 'active' if current_page?('/conversations') %>">
-        <%= link_to '/conversations' do %>
+      <li class="nav-item <%= 'active' if current_page?(conversations_path) %>">
+        <%= link_to conversations_path do %>
           <span class="nav-icon"><i class="fa fa-comments" aria-hidden="true"></i></span>
           <span class="nav-label">Conversas</span>
         <% end %>
       </li>
 
-      <li class="nav-item <%= 'active' if current_page?('/analytics') %>">
+      <li class="nav-item <%= 'active' if current_page?(classifications_path) || request.path.start_with?('/classifications') %>">
         <%= link_to classifications_path do %>
           <span class="nav-icon"><i class="fa fa-chart-bar" aria-hidden="true"></i></span>
           <span class="nav-label">Análises</span>
         <% end %>
       </li>
 
-      <!-- <li class="nav-item <%= 'active' if current_page?('/settings') %>">
-        <%= link_to '/settings' do %>
-          <span class="nav-icon"><i class="fa fa-cog" aria-hidden="true"></i></span>
-          <span class="nav-label">Configurações</span>
-        <% end %>
-      </li> -->
-    </ul>
-  </div>
-
-  <div class="section">
-    <h4 class="section-title">Intelligence</h4>
-
-    <ul class="nav-list">
-      <li class="nav-item <%= 'active' if current_page?(conversations_path) %>">
-        <%= link_to conversations_path do %>
-          <span class="nav-icon"><i class="fa fa-question-circle" aria-hidden="true"></i></span>
-          <span class="nav-label">Perguntas & FAQ</span>
+      <li class="nav-item <%= 'active' if request.path.start_with?('/chats') %>">
+        <%= link_to chats_path, data: { turbo_method: :post } do %>
+          <span class="nav-icon"><i class="fa fa-robot" aria-hidden="true"></i></span>
+          <span class="nav-label">Chat</span>
         <% end %>
       </li>
-
-      <li class="nav-item <%= 'active' if current_page?('/intelligence/complaints') %>">
-        <%= link_to '/intelligence/complaints' do %>
-          <span class="nav-icon"><i class="fa fa-exclamation-triangle" aria-hidden="true"></i></span>
-          <span class="nav-label">Reclamações</span>
-        <% end %>
-      </li>
-
-      <li class="nav-item <%= 'active' if current_page?(insight_list_conversations_path) %>">
-        <%= link_to insight_list_conversations_path do %>
-          <span class="nav-icon"><i class="fa fa-cube" aria-hidden="true"></i></span>
-          <span class="nav-label">Insights de Produto</span>
-        <% end %>
-      </li>
-
-      <!-- <li class="nav-item <%= 'active' if current_page?('/analysis/conversations') %>">
-        <%= link_to '/analysis/conversations' do %>
-          <span class="nav-icon"><i class="fa fa-wifi" aria-hidden="true"></i></span>
-          <span class="nav-label">Voice of Customer</span>
-        <% end %>
-      </li>  -->
     </ul>
   </div>
 </aside>

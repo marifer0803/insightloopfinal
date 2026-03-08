@@ -1,7 +1,3 @@
-
-
-
-
 <div class="conversations-page">
 
   <%= link_to dashboard_path, class: "back-link" do %>
@@ -17,38 +13,30 @@
   <% @conversations.each do |conversation| %>
     <div class="conversation-item">
 
-      <!-- ESQUERDA -->
       <div class="conversation-left">
         <div class="conversation-avatar">
-          <%= @customer_names[conversation.id % @customer_names.size].first %>
+          <%= conversation.customer&.name&.first || "?" %>
         </div>
 
         <div class="conversation-content">
 
-          <!-- NOME -->
           <p class="conversation-name">
-            <%= @customer_names[conversation.id % @customer_names.size] %>
+            <%= conversation.customer&.name.presence || "Cliente não identificado" %>
           </p>
 
-          <!-- TÍTULO (VEM DO SEED / CLASSIFICATION) -->
           <p class="conversation-subtitle">
-            <%= conversation.classification&.tag || "Aguardando classificação"%>
-
+            <%= conversation.classification&.tag || "Aguardando classificação" %>
           </p>
 
-          <!-- PREVIEW -->
           <p class="conversation-preview">
-            <%= conversation.content.to_s.lines.first
-                  .gsub(/\[.*?\]:/, "")
-                  .strip %>
+            <%= conversation.content.to_s.truncate(100) %>
           </p>
 
         </div>
       </div>
 
-      <!-- DIREITA -->
       <div class="conversation-right">
-        <%= link_to  insight_conversation_path(conversation),
+        <%= link_to insight_conversation_path(conversation),
               class: "conversation-arrow" do %>
           <i class="fa-solid fa-arrow-right-long"></i>
         <% end %>

@@ -2,9 +2,7 @@ class PagesController < ApplicationController
   skip_before_action :authenticate_user!, only: [:home]
 
   def dashboard
-    # --------------------------------------------------
-    # 1️⃣ Date range (single source of truth)
-    # --------------------------------------------------
+    # Date range
     @start_date =
       params[:start_date]&.to_date ||
       Conversation.minimum(:occurred_on)
@@ -13,104 +11,80 @@ class PagesController < ApplicationController
       params[:end_date]&.to_date ||
       Conversation.maximum(:occurred_on)
 
-    base_scope = Conversation
-      .joins(:category)
-      .where(occurred_on: @start_date..@end_date)
-    # --------------------------------------------------
-    # 2️⃣ KPIs (still work exactly as before)
-    # --------------------------------------------------
-    @conversation_questions_count =
-      base_scope.where(categories: { name: "questions" }).count
+    base_scope = Conversation.where(occurred_on: @start_date..@end_date)
 
-    @conversation_complaints_count =
-      base_scope.where(categories: { name: "complaints" }).count
+    # KPI 1: Total Conversations in period
+    @total_conversations = base_scope.count
 
-    @conversation_insights_count =
-      base_scope.where(categories: { name: "product_insights" }).count
+    # KPI 2: Critical Sentiment - conversations with "crítico" or "frustrado"
+    @critical_sentiment_count = base_scope
+      .where(sentiment_label: ["crítico", "frustrado"])
+      .count
 
-    # --------------------------------------------------
-    # 3️⃣ Button state (UNCHANGED behavior)
-    # --------------------------------------------------
+    # KPI 3: Revenue at Risk - MRR sum of at_risk customers with conversations in period
+    at_risk_customer_ids = base_scope
+      .where.not(customer_id: nil)
+      .joins("INNER JOIN customers ON customers.id = conversations.customer_id")
+      .where(customers: { status: "at_risk" })
+      .distinct
+      .pluck(:customer_id)
+
+    @revenue_at_risk = at_risk_customer_ids.any? ? Customer.where(id: at_risk_customer_ids).sum(:mrr) : 0
+
+    # Top 3 Problems by Impact (priority_score)
+    @top_problems = build_top_problems(base_scope)
+
+    # Button state
     range_type = params[:range_type]
-
     @active_preset =
       range_type == "preset" ? active_preset(@start_date, @end_date) : nil
-
     @custom_range_active =
       range_type == "custom"
 
-    # --------------------------------------------------
-    # 4️⃣ Decide chart grouping based on time span
-    # --------------------------------------------------
+    # Chart grouping based on time span
     range_days = (@end_date - @start_date).to_i
 
-    if range_days <= 14
-      sql_group = "DATE(occurred_on)"
-      label_format = "%a"            # Mon, Tue…
-    elsif range_days <= 90
-      sql_group = "DATE_TRUNC('week', occurred_on)"
-      label_format = "W%U"            # Week number
+    if range_days <= 7
+      group_sql    = "occurred_on::date"
+      label_format = "%d %b"
+    elsif range_days <= 31
+      group_sql    = "DATE_TRUNC('week', occurred_on)::date"
+      label_format = "Week of %d %b"
+    elsif range_days <= 92
+      group_sql    = "DATE_TRUNC('month', occurred_on)::date"
+      label_format = "%b %Y"
     else
-      sql_group = "DATE_TRUNC('month', occurred_on)"
-      label_format = "%b %Y"          # Jan 2025
+      group_sql    = "DATE_TRUNC('week', occurred_on)::date"
+      label_format = "Week of %d %b"
     end
 
-# --------------------------------------------------
-# Chart data (dynamic + grouped)
-# --------------------------------------------------
+    @chart_series = Conversation
+      .joins(:category)
+      .where(occurred_on: @start_date..@end_date)
+      .group(
+        Arel.sql(group_sql),
+        Arel.sql("categories.name")
+      )
+      .order(Arel.sql(group_sql))
+      .count
 
-range_days = (@end_date - @start_date).to_i
+    periods = @chart_series.keys.map(&:first).uniq.sort
+    categories = @chart_series.keys.map(&:last).uniq
 
-if range_days <= 7
-  # Últimos 7 dias
-  group_sql    = "occurred_on::date"
-  label_format = "%d %b"
+    labels = periods.map { |p| p.strftime(label_format) }
 
-elsif range_days <= 31
-  # Último mês
-  group_sql    = "DATE_TRUNC('week', occurred_on)::date"
-  label_format = "Week of %d %b"
+    datasets = categories.map do |category|
+      {
+        label: category.to_s.humanize.titleize,
+        data: periods.map { |p| @chart_series[[p, category]] || 0 },
+        color: "--#{category.parameterize}"
+      }
+    end
 
-elsif range_days <= 92
-  # Último quarter
-  group_sql    = "DATE_TRUNC('month', occurred_on)::date"
-  label_format = "%b %Y"
-
-else
-  # Custom long range
-  group_sql    = "DATE_TRUNC('week', occurred_on)::date"
-  label_format = "Week of %d %b"
-end
-
-@chart_series = Conversation
-  .joins(:category)
-  .where(occurred_on: @start_date..@end_date)
-  .group(
-    Arel.sql(group_sql),
-    Arel.sql("categories.name")
-  )
-  .order(Arel.sql(group_sql))
-  .count
-
-periods = @chart_series.keys.map(&:first).uniq.sort
-categories = @chart_series.keys.map(&:last).uniq
-
-labels = periods.map { |p| p.strftime(label_format) }
-
-datasets = categories.map do |category|
-  {
-    label: category.to_s.humanize.titleize,
-    data: periods.map { |p| @chart_series[[p, category]] || 0 },
-    color: "--#{category.parameterize}"
-  }
-end
-
-@chart_data = {
-  labels: labels,
-  datasets: datasets
-}
-
-
+    @chart_data = {
+      labels: labels,
+      datasets: datasets
+    }
   end
 
   def home
@@ -118,9 +92,46 @@ end
 
   private
 
-  # --------------------------------------------------
-  # 6️⃣ Preset detection (unchanged)
-  # --------------------------------------------------
+  def build_top_problems(base_scope)
+    classification_ids = base_scope.where.not(classification_id: nil)
+                                    .group(:classification_id)
+                                    .order(Arel.sql("COUNT(*) DESC"))
+                                    .limit(10)
+                                    .count
+                                    .keys
+
+    classifications = Classification.where(id: classification_ids)
+
+    classifications.map do |classification|
+      convos = base_scope.where(classification_id: classification.id)
+      volume = convos.count
+      next if volume.zero?
+
+      avg_sentiment = convos.where.not(sentiment_score: nil).average(:sentiment_score)&.round(1) || 0
+
+      customer_ids = convos.where.not(customer_id: nil).pluck(:customer_id).uniq
+      revenue_lost = customer_ids.any? ? Customer.where(id: customer_ids, status: "churned").sum(:mrr) : 0
+
+      churn_rate = 0
+      if customer_ids.any?
+        total_c = Customer.where(id: customer_ids).count
+        churned_c = Customer.where(id: customer_ids, status: "churned").count
+        churn_rate = total_c.positive? ? ((churned_c * 100.0) / total_c).round(1) : 0
+      end
+
+      priority_score = (volume * 0.3) + (avg_sentiment * 0.25) + (churn_rate * 0.25) + ((revenue_lost / 100.0) * 0.2)
+
+      OpenStruct.new(
+        id: classification.id,
+        tag: classification.tag,
+        volume: volume,
+        avg_sentiment: avg_sentiment,
+        revenue_lost: revenue_lost,
+        priority_score: priority_score.round(1)
+      )
+    end.compact.sort_by { |r| -r.priority_score }.first(3)
+  end
+
   def active_preset(start_date, end_date)
     today = Date.today
 
@@ -130,5 +141,4 @@ end
 
     nil
   end
-
 end

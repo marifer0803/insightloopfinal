@@ -193,7 +193,7 @@
   color: #334155;
 }
 
-/* 🔥 IMPORTANTE: blindagem contra CSS global de svg */
+/* Prevent global svg rules from affecting home hero icons */
 .home-hero svg {
   width: 1em !important;
   height: 1em !important;

@@ -1,9 +1,5 @@
 <div class="chat-show-page">
 
-  <!-- Breadcrumb / link de volta -->
-
-
-  <!-- Header do chat -->
   <div class="card border-0 shadow-sm mb-3 chat-header-card">
     <div class="card-body">
       <h1 class="h4 mb-1" id="chat_title">
@@ -16,23 +12,13 @@
   </div>
 
   <%= turbo_frame_tag :insight_assistant do %>
-
-
-    <!-- Info que veio do ai-widget -->
     <div class="ai-widget__body" data-ai-chat-target="messages">
       <div class="ai-bubble ai-bubble--assistant">
-        Oi! Pergunte sobre volumes, tendências ou causas raiz 🙂
+        Oi! Pergunte sobre volumes, tendências ou causas raiz.
       </div>
 
-      <!-- Card com as mensagens -->
-      <%# <div class="ai-bubble ai-bubble--user">
-        <div class="card-body p-0"> %>
-            <%= render "messages/messages", messages: @chat.messages %>
-        <%# </div>
-      </div> %>
-
-      <!-- Card com o formulário -->
+      <%= render "messages/messages", messages: @chat.messages %>
     </div>
-      <%= render "messages/form", chat: @chat, message: @message %>
+    <%= render "messages/form", chat: @chat, message: @message %>
   <% end %>
 </div>
