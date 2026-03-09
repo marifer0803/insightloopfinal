@@ -5,11 +5,13 @@ class PagesController < ApplicationController
     # Date range
     @start_date =
       params[:start_date]&.to_date ||
-      Conversation.minimum(:occurred_on)
+      Conversation.minimum(:occurred_on) ||
+      Date.current
 
     @end_date =
       params[:end_date]&.to_date ||
-      Conversation.maximum(:occurred_on)
+      Conversation.maximum(:occurred_on) ||
+      Date.current
 
     base_scope = Conversation.where(occurred_on: @start_date..@end_date)
 
@@ -29,7 +31,7 @@ class PagesController < ApplicationController
       .distinct
       .pluck(:customer_id)
 
-    @revenue_at_risk = at_risk_customer_ids.any? ? Customer.where(id: at_risk_customer_ids).sum(:mrr) : 0
+    @revenue_at_risk = at_risk_customer_ids.any? ? Customer.where(id: at_risk_customer_ids).sum(:mrr).to_f : 0
 
     # Top 3 Problems by Impact (priority_score)
     @top_problems = build_top_problems(base_scope)
