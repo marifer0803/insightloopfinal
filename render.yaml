@@ -9,7 +9,7 @@ services:
     name: insightloopfinal
     runtime: ruby
     plan: free
-    buildCommand: bundle install && bundle exec rake assets:precompile && bundle exec rake db:migrate
+    buildCommand: bundle install && RAILS_ENV=production SECRET_KEY_BASE=dummy bundle exec rake assets:precompile && bundle exec rake db:migrate
     startCommand: bundle exec puma -C config/puma.rb
     envVars:
       - key: DATABASE_URL
