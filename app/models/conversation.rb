@@ -61,8 +61,15 @@ class Conversation < ApplicationRecord
     tag_value      = data["tag"].to_s.strip
     category_value = data["category"].to_s.strip
 
-    classification = Classification.find_by(tag: tag_value) || fallback
-    category       = Category.find_by(name: category_value)
+    classification = if tag_value.present?
+                       Classification.find_or_create_by(tag: tag_value)
+                     else
+                       Classification.find_or_create_by(tag: "Outros")
+                     end
+
+    category = if category_value.present?
+                 Category.find_or_create_by(name: category_value)
+               end
 
     sentiment_score = data["sentiment_score"]
     sentiment_label = data["sentiment_label"]
